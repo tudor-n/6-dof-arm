@@ -112,7 +112,9 @@ function connect(){
   if(m.type=='cfg'){cfg=m.cfg;buildCal();setRanges();}
   else if(m.type=='tool'){}
   else if(m.type=='restinfo'){const n=$('restnote');n.style.display='';n.textContent='Rest servo angles: '+m.servo.map(v=>v.toFixed(0)).join(', ')+(m.clipped?'  (some joints hit their limits - check)':'')+'  → put these in firmware cur[]/tgt[] and START_POSE if you want power-on to start here.';}
-  else if(m.type=='state'){st=m;updateStatus();updateCal();}
+  else if(m.type=='state'){st=m;if(!dragSide && !dragTop && st.pts_tgt) {
+      liveTip = { x: st.pts_tgt[4][0], y: st.pts_tgt[4][1], z: st.pts_tgt[4][2] };
+    }updateStatus();updateCal();}
   draw();};
 }
 function setRanges(){ $('roll').min=cfg.joints[4].min;$('roll').max=cfg.joints[4].max;$('grip').min=cfg.joints[5].min;$('grip').max=cfg.joints[5].max;}
@@ -169,19 +171,74 @@ function draw(){
 }
 function pos(cv,e){const b=cv.getBoundingClientRect();return[(e.clientX-b.left)*cv.width/b.width,(e.clientY-b.top)*cv.height/b.height]}
 const nrm=a=>((a+180)%360+360)%360-180, D=180/Math.PI;
+let dragSide = null, dragTop = null, liveTip = {x: 0, y: 0, z: 0};
+
 function sideDrag(n,r,z){
  const L=cfg.links,A=st.ang,q=st.pl_tgt;
- if(n=='tip'){const y=A[0]/D,rr=Math.max(0,r);sendDrag({type:'tip',x:rr*Math.cos(y),y:rr*Math.sin(y),z:Math.max(5,z),lock:$('lock').checked})}
- else if(n=='elbow'){sendDrag({type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)})}                       // rotates the whole arm about the shoulder
- else if(n=='wrist'){const e=q[2];sendDrag({type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)})}  // bends the elbow
- else if(n=='dir'){const w=q[3];sendDrag({type:'joints',gamma:nrm((90-A[1]-A[2])-Math.atan2(z-w[1],r-w[0])*D)})} // aims the gripper
+ if(n=='tip'){
+  // Side view dictates Radius and Height (Z); preserves the Base Yaw
+  const yaw = Math.atan2(liveTip.y, Math.max(0.001, liveTip.x));
+  const rr = Math.max(0, r);
+  liveTip.x = rr * Math.cos(yaw);
+  liveTip.y = rr * Math.sin(yaw);
+  liveTip.z = Math.max(5, z);
+  sendDrag({type:'tip', x:liveTip.x, y:liveTip.y, z:liveTip.z, lock:$('lock').checked});
+ }
+ else if(n=='elbow'){sendDrag({type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)})}                       
+ else if(n=='wrist'){const e=q[2];sendDrag({type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)})}  
+ else if(n=='dir'){const w=q[3];sendDrag({type:'joints',gamma:nrm((90-A[1]-A[2])-Math.atan2(z-w[1],r-w[0])*D)})} 
 }
-let dragH=null;
-side.onpointerdown=e=>{if(!st)return;const p=pos(side,e);for(const h of sideHandles()){if(Math.hypot(p[0]-h.px[0],p[1]-h.px[1])<h.rad+10){dragH={cv:side,n:h.n,off:[h.px[0]-p[0],h.px[1]-p[1]]};side.setPointerCapture(e.pointerId);break}}};
-side.onpointermove=e=>{if(dragH&&dragH.cv===side){const p=pos(side,e),q=[p[0]+dragH.off[0],p[1]+dragH.off[1]];sideDrag(dragH.n,(q[0]-SO.x)/SS,(SO.y-q[1])/SS)}};
-topv.onpointerdown=e=>{if(!st)return;const p=pos(topv,e),h=tp(st.pts_tgt[4][0],st.pts_tgt[4][1]);if(Math.hypot(p[0]-h[0],p[1]-h[1])<26){dragH={cv:topv,n:'tip',off:[h[0]-p[0],h[1]-p[1]]};topv.setPointerCapture(e.pointerId)}};
-topv.onpointermove=e=>{if(dragH&&dragH.cv===topv){const p0=pos(topv,e),p=[p0[0]+dragH.off[0],p0[1]+dragH.off[1]];sendDrag({type:'tip',x:Math.max(0,(TO.y-p[1])/TS),y:(TO.x-p[0])/TS,z:st.pts_tgt[4][2],lock:$('lock').checked})}};
-for(const cv of [side,topv])cv.onpointerup=cv.onpointercancel=()=>{dragH=null;flush()};
+
+// Side Canvas Touch
+side.onpointerdown=e=>{
+ if(!st)return; const p=pos(side,e);
+ for(const h of sideHandles()){
+  if(Math.hypot(p[0]-h.px[0],p[1]-h.px[1])<h.rad+10){
+   dragSide={id:e.pointerId, n:h.n, off:[h.px[0]-p[0],h.px[1]-p[1]]};
+   side.setPointerCapture(e.pointerId); break;
+  }
+ }
+};
+side.onpointermove=e=>{
+ if(dragSide && dragSide.id === e.pointerId){
+  const p=pos(side,e), q=[p[0]+dragSide.off[0], p[1]+dragSide.off[1]];
+  sideDrag(dragSide.n,(q[0]-SO.x)/SS,(SO.y-q[1])/SS);
+ }
+};
+side.onpointerup=side.onpointercancel=e=>{
+ if(dragSide && dragSide.id === e.pointerId){ dragSide = null; flush(); }
+};
+
+// Top Canvas Touch
+topv.onpointerdown=e=>{
+ if(!st)return; const p=pos(topv,e), h=tp(st.pts_tgt[4][0],st.pts_tgt[4][1]);
+ // Increased hit area to 50px for easier mobile thumb grabbing
+ if(Math.hypot(p[0]-h[0],p[1]-h[1])<50){
+  dragTop={id:e.pointerId, off:[h[0]-p[0],h[1]-p[1]]};
+  topv.setPointerCapture(e.pointerId);
+ }
+};
+topv.onpointermove=e=>{
+ if(dragTop && dragTop.id === e.pointerId){
+  const p0=pos(topv,e), p=[p0[0]+dragTop.off[0], p0[1]+dragTop.off[1]];
+  
+  // 1. Preserve the current reach radius (r) so the arm doesn't extend/retract
+  const curR = Math.hypot(liveTip.x, liveTip.y);
+  const r = curR > 5 ? curR : (st && st.pts_tgt ? Math.hypot(st.pts_tgt[4][0], st.pts_tgt[4][1]) : 150);
+  
+  // 2. Derive purely the angular yaw from your finger's position relative to the base
+  const yaw = Math.atan2(TO.x - p[0], Math.max(1, TO.y - p[1]));
+  
+  // 3. Project the existing radius onto the new angle (Z is untouched)
+  liveTip.x = Math.max(0, r * Math.cos(yaw));
+  liveTip.y = r * Math.sin(yaw);
+  
+  sendDrag({type:'tip', x:liveTip.x, y:liveTip.y, z:liveTip.z, lock:$('lock').checked});
+ }
+};
+topv.onpointerup=topv.onpointercancel=e=>{
+ if(dragTop && dragTop.id === e.pointerId){ dragTop = null; flush(); }
+};
 
 // ---- calibration ----
 function buildCal(){
