@@ -35,9 +35,6 @@ static uint8_t relaxed = 0;   // bit i = channel i has PWM cut (limp, ~0 current
 static int force_push = 0;
 static int engaged = 0;       // 0 after boot: all servos limp until the server sends an R command (Live ON)
 static float lim_lo[N] = {0, 0, 0, 0, 0, 0}, lim_hi[N] = {180, 180, 180, 180, 180, 180};  // set by server: L i lo hi
-#define AUTO_RELAX_MASK 0x00        // gripper (ch5) auto-relaxes when idle
-#define AUTO_RELAX_US   3000000
-static int64_t last_move_us[N];
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
@@ -89,7 +86,7 @@ static void handle_line(char *s) {
         if (sscanf(s + 2, "%f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 6)
             for (int i = 0; i < N; i++) {
                 float nv = clampf(v[i], lim_lo[i], lim_hi[i]);
-                if (fabsf(nv - tgt[i]) > 0.05f) { if (engaged) relaxed &= ~(1 << i); last_move_us[i] = esp_timer_get_time(); }   // moving a channel wakes it
+                if (fabsf(nv - tgt[i]) > 0.05f) { if (engaged) relaxed &= ~(1 << i); }   // moving a channel wakes it
                 tgt[i] = nv;
             }
     } else if (s[0] == 'L' && s[1] == ' ') {          // L <ch> <lo> <hi>: hard per-channel limits
@@ -100,7 +97,6 @@ static void handle_line(char *s) {
         }
     } else if (s[0] == 'R' && s[1] == ' ') {          // R <bitmask>: cut PWM on those channels
         relaxed = (uint8_t)(atoi(s + 2) & 0x3F); force_push = 1; engaged = 1;
-        for (int i = 0; i < N; i++) last_move_us[i] = esp_timer_get_time();
     } else if (strncmp(s, "GET", 3) == 0) {
         char out[96];
         snprintf(out, sizeof(out), "S %.1f %.1f %.1f %.1f %.1f %.1f E%d\n",
@@ -117,7 +113,6 @@ void app_main(void) {
     relaxed = 0x3F;
     pca_push();                         // all channels OFF: servos stay limp until the UI engages them
 
-    for (int i = 0; i < N; i++) last_move_us[i] = esp_timer_get_time();
     char line[128]; int len = 0;
     int64_t last = esp_timer_get_time();
     uint8_t rx[64];
@@ -130,37 +125,5 @@ void app_main(void) {
             else len = 0;
         }
         int64_t now = esp_timer_get_time();
-        if (now - last >= LOOP_US) {
-            float dt = (now - last) / 1e6f, maxstep = MAX_DPS * dt;
-            last = now;
-            int dirty = 0;
-            for (int i = 0; i < N; i++) {
-                float d = tgt[i] - cur[i];
-                
-                // 1. Widen deadband to 0.3° to stop MG996R from endlessly hunting/buzzing
-                if (fabsf(d) > 0.3f) { 
-                    float step;
-                    
-                    if (i == 5) {
-                        // Let the server strictly dictate the gripper speed without lag
-                        step = clampf(d, -maxstep, maxstep); 
-                    } else {
-                        // 2. Smooth the ESP32's catch-up logic to prevent serial-stutter
-                        step = clampf(d * 0.15f, -maxstep, maxstep); 
-                    }
-                    
-                    // 3. Minimum push threshold to ensure it doesn't stall out just before the target
-                    if (step > 0 && step < 0.15f) step = 0.15f;
-                    if (step < 0 && step > -0.15f) step = -0.15f;
-                    
-                    cur[i] += step; 
-                    dirty = 1; 
-                    last_move_us[i] = now; 
-                }
-                
-                if ((AUTO_RELAX_MASK & (1 << i)) && !(relaxed & (1 << i)) && now - last_move_us[i] > AUTO_RELAX_US) { relaxed |= (1 << i); force_push = 1; }
-            }
-            if (dirty || force_push) { pca_push(); force_push = 0; }
-        }
     }
 }
