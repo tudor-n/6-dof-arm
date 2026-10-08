@@ -265,17 +265,19 @@ function updateCal(){if(!cfg||!st)return;if(wz>=0&&$('wzang')){const s=steps[wz]
 const linksNode=$('links');
 const REF=['the arm points straight FORWARD (up the screen in the top view)','the upper arm points straight UP (vertical)','the forearm is in a straight line with the upper arm','the gripper plate is in a straight line with the forearm'];
 const DIR=['turns LEFT (anticlockwise seen from above)','leans FORWARD','folds the forearm FORWARD / DOWN','tilts the gripper DOWN'];
-const NAMES=['Base','Shoulder','Elbow','Wrist pitch','Wrist roll'];
-const steps=[{k:'start'}];for(let j=0;j<4;j++)steps.push({k:'zero',j},{k:'dir',j},{k:'lim',j});steps.push({k:'lim',j:4},{k:'done'});
+const NAMES=['Base','Shoulder','Elbow','Wrist pitch','Wrist roll','Gripper'];
+const steps=[{k:'start'},{k:'lim',j:5}];
+for(let j=0;j<4;j++)steps.push({k:'zero',j},{k:'dir',j},{k:'lim',j});
+steps.push({k:'lim',j:4},{k:'done'});
 let wz=-1;
 function holdBtn(el,j,dir){let iv=null;const stop=()=>{if(iv){clearInterval(iv);iv=null;send({type:'creep',servo:j,dir:0})}};
  el.onpointerdown=e=>{el.setPointerCapture(e.pointerId);send({type:'creep',servo:j,dir});iv=setInterval(()=>send({type:'creep',servo:j,dir}),100)};
  el.onpointerup=stop;el.onpointercancel=stop;el.onlostpointercapture=stop;}
 function wzInfo(){if(wz<0||!cfg)return;const s=steps[wz],e=$('wzinfo');if(!e||s.j===undefined)return;const J=cfg.joints[s.j];
- e.textContent=(s.j<4?`zero ${J.zero}   sign ${J.sign>0?'+':'−'}   `:'')+`limits ${J.min} – ${J.max}`;}
+ e.textContent=(s.j<4?`zero ${J.zero}  sign ${J.sign>0?'+':'−'}  `:'')+`limits ${J.min} – ${J.max}`;}
 function wzRender(){
  const box=$('wiz');document.querySelector('#cal details').appendChild(linksNode);
- if(wz<0){box.innerHTML='<h3>Guided calibration</h3><p class="help">Takes about 10 minutes, one joint at a time. Gripper is skipped for now. Turn <b>Live ON</b>, keep Speed low (about 20°/s) and keep a hand near the power switch.</p><button id="wzgo" class="on">Start</button>';
+ if(wz<0){box.innerHTML='<h3>Guided calibration</h3><p class="help">Takes about 10 minutes, one joint at a time. Turn <b>Live ON</b>, keep Speed low (about 20°/s) and keep a hand near the power switch.</p><button id="wzgo" class="on">Start</button>';
   $('wzgo').onclick=()=>{wz=0;send({type:'unlock',on:true});wzRender()};return}
  const s=steps[wz];let t=`<div class="mono">Step ${wz+1} / ${steps.length}</div>`;
  const nav=`<div class="row"><button id="wzb">← Back</button><button id="wzn" class="on">Next →</button></div>`;
@@ -292,10 +294,10 @@ function wzRender(){
  if(s.k=='start'){$('wzlinks').appendChild(linksNode);$('wzlive').onclick=()=>send({type:'live',on:true})}
  box.querySelectorAll('button[data-d]').forEach(b=>b.onclick=()=>send({type:'nudge',servo:s.j,delta:+b.dataset.d,joint:s.j<4}));
  box.querySelectorAll('button[data-jp]').forEach(b=>b.onclick=()=>send({type:'jointpos',joint:s.j,angle:+b.dataset.jp}));
- if(s.k=='zero')$('wzzero').onclick=()=>send({type:'setzero',joint:s.j});
+ if(s.k=='zero'){$('wzzero').onclick=()=>send({type:'setzero',joint:s.j});}
  if(s.k=='dir'){$('wzok').onclick=()=>{wz++;wzRender()};$('wzflip').onclick=()=>{send({type:'flip',joint:s.j});$('wzinfo').textContent='Flipped. Press Back to 0°, then Go to +10° again: it should now move the other way.'}}
  if(s.k=='lim'){holdBtn($('wzmin'),s.j,-1);holdBtn($('wzmax'),s.j,1);$('wzmid').onclick=()=>send({type:'raw',servo:s.j,angle:90})}
- if(s.k=='done')$('wzfin').onclick=()=>{send({type:'unlock',on:false});wz=-1;wzRender();document.querySelector('.tab[data-tab=move]').click()};$('wzb').onclick=()=>{if(wz>0){wz--;wzRender()}else{send({type:'unlock',on:false});wz=-1;wzRender()}};
+ if(s.k=='done'){$('wzfin').onclick=()=>{send({type:'unlock',on:false});wz=-1;wzRender();document.querySelector('.tab[data-tab=move]').click()};$('wzb').onclick=()=>{if(wz>0){wz--;wzRender()}else{send({type:'unlock',on:false});wz=-1;wzRender()}};}
  const n=$('wzn');if(s.k=='done')n.style.display='none';else n.onclick=()=>{wz++;wzRender()};
  wzInfo();
 }

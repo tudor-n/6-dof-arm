@@ -139,8 +139,15 @@ void app_main(void) {
                 
                 // 1. Widen deadband to 0.3° to stop MG996R from endlessly hunting/buzzing
                 if (fabsf(d) > 0.3f) { 
-                    // 2. Smooth the ESP32's catch-up logic to prevent serial-stutter
-                    float step = clampf(d * 0.15f, -maxstep, maxstep); 
+                    float step;
+                    
+                    if (i == 5) {
+                        // Let the server strictly dictate the gripper speed without lag
+                        step = clampf(d, -maxstep, maxstep); 
+                    } else {
+                        // 2. Smooth the ESP32's catch-up logic to prevent serial-stutter
+                        step = clampf(d * 0.15f, -maxstep, maxstep); 
+                    }
                     
                     // 3. Minimum push threshold to ensure it doesn't stall out just before the target
                     if (step > 0 && step < 0.15f) step = 0.15f;

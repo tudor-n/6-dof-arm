@@ -195,7 +195,7 @@ async def control_loop():
         now = time.time(); dt = now - last; last = now
         if S.creep:
             i, d, dl = S.creep
-            if now > dl: S.creep = None               
+            if now > dl: S.creep = None              
             else:
                 S.tgt[i] = clamp(S.tgt[i] + d * 4.0 * dt, 0, 180)
                 S.tgt[i] = clamp(S.tgt[i], S.cur[i] - 3, S.cur[i] + 3)   
@@ -205,7 +205,13 @@ async def control_loop():
               for i in range(6):
                 dist = S.tgt[i] - S.cur[i]
                 joint_speed_limit = (S.speed * dt) * (abs(dist) / max_dist)
-                step = clamp(dist * 6.0 * dt, -joint_speed_limit, joint_speed_limit)
+                
+                # Gripper (5) gets no decay smoothing - strictly bound by speed slider
+                if i == 5:
+                    step = clamp(dist, -joint_speed_limit, joint_speed_limit)
+                else:
+                    step = clamp(dist * 6.0 * dt, -joint_speed_limit, joint_speed_limit)
+                
                 if abs(dist) < 0.1:
                     S.cur[i] = S.tgt[i]
                 else:
