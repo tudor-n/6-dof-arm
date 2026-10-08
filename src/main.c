@@ -116,7 +116,9 @@ void app_main(void) {
     char line[128]; int len = 0;
     int64_t last = esp_timer_get_time();
     uint8_t rx[64];
+    
     while (1) {
+        // Read incoming serial commands
         int n = uart_read_bytes(UART_NUM_0, rx, sizeof(rx), pdMS_TO_TICKS(5));
         for (int i = 0; i < n; i++) {
             char c = (char)rx[i];
@@ -124,6 +126,38 @@ void app_main(void) {
             else if (len < (int)sizeof(line) - 1) line[len++] = c;
             else len = 0;
         }
+        
+        // Timer loop to push updates to the servos at 50Hz
         int64_t now = esp_timer_get_time();
+        if (now - last >= LOOP_US) {
+            float dt = (now - last) / 1e6f, maxstep = MAX_DPS * dt;
+            last = now;
+            int dirty = 0;
+            
+            for (int i = 0; i < N; i++) {
+                float d = tgt[i] - cur[i];
+                
+                // 1. Widen deadband to 0.3° to stop MG996R from endlessly hunting/buzzing
+                if (fabsf(d) > 0.3f) { 
+                    float step;
+                    
+                    if (i == 5) {
+                        // Let the server strictly dictate the gripper speed without lag
+                        step = clampf(d, -maxstep, maxstep); 
+                    } else {
+                        // 2. Smooth the ESP32's catch-up logic to prevent serial-stutter
+                        step = clampf(d * 0.15f, -maxstep, maxstep); 
+                    }
+                    
+                    // 3. Minimum push threshold to ensure it doesn't stall out just before the target
+                    if (step > 0 && step < 0.15f) step = 0.15f;
+                    if (step < 0 && step > -0.15f) step = -0.15f;
+                    
+                    cur[i] += step; 
+                    dirty = 1; 
+                }
+            }
+            if (dirty || force_push) { pca_push(); force_push = 0; }
+        }
     }
 }
