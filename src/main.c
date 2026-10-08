@@ -35,7 +35,7 @@ static uint8_t relaxed = 0;   // bit i = channel i has PWM cut (limp, ~0 current
 static int force_push = 0;
 static int engaged = 0;       // 0 after boot: all servos limp until the server sends an R command (Live ON)
 static float lim_lo[N] = {0, 0, 0, 0, 0, 0}, lim_hi[N] = {180, 180, 180, 180, 180, 180};  // set by server: L i lo hi
-#define AUTO_RELAX_MASK 0x20          // gripper (ch5) auto-relaxes when idle
+#define AUTO_RELAX_MASK 0x00        // gripper (ch5) auto-relaxes when idle
 #define AUTO_RELAX_US   3000000
 static int64_t last_move_us[N];
 
@@ -100,6 +100,7 @@ static void handle_line(char *s) {
         }
     } else if (s[0] == 'R' && s[1] == ' ') {          // R <bitmask>: cut PWM on those channels
         relaxed = (uint8_t)(atoi(s + 2) & 0x3F); force_push = 1; engaged = 1;
+        for (int i = 0; i < N; i++) last_move_us[i] = esp_timer_get_time();
     } else if (strncmp(s, "GET", 3) == 0) {
         char out[96];
         snprintf(out, sizeof(out), "S %.1f %.1f %.1f %.1f %.1f %.1f E%d\n",
