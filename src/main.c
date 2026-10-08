@@ -135,26 +135,25 @@ void app_main(void) {
             int dirty = 0;
             
             for (int i = 0; i < N; i++) {
-                float d = tgt[i] - cur[i];
-                
-                // 1. Widen deadband to 0.3° to stop MG996R from endlessly hunting/buzzing
-                if (fabsf(d) > 0.3f) { 
-                    float step;
-                    
-                    if (i == 5) {
-                        // Let the server strictly dictate the gripper speed without lag
-                        step = clampf(d, -maxstep, maxstep); 
-                    } else {
-                        // 2. Smooth the ESP32's catch-up logic to prevent serial-stutter
-                        step = clampf(d * 0.15f, -maxstep, maxstep); 
+                // --- NEW LOGIC FOR GRIPPER (Channel 5) ---
+                if (i == 5) {
+                    if (cur[i] != tgt[i]) {
+                        cur[i] = tgt[i]; // Instant snap to target (no ramp-down lag)
+                        dirty = 1;
                     }
-                    
-                    // 3. Minimum push threshold to ensure it doesn't stall out just before the target
-                    if (step > 0 && step < 0.15f) step = 0.15f;
-                    if (step < 0 && step > -0.15f) step = -0.15f;
-                    
-                    cur[i] += step; 
-                    dirty = 1; 
+                } 
+                // --- STANDARD LOGIC FOR ALL OTHER JOINTS ---
+                else {
+                    float d = tgt[i] - cur[i];
+                    if (fabsf(d) > 0.3f) { 
+                        float step = clampf(d * 0.15f, -maxstep, maxstep); 
+                        
+                        if (step > 0 && step < 0.15f) step = 0.15f;
+                        if (step < 0 && step > -0.15f) step = -0.15f;
+                        
+                        cur[i] += step; 
+                        dirty = 1; 
+                    }
                 }
             }
             if (dirty || force_push) { pca_push(); force_push = 0; }

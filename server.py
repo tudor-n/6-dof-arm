@@ -153,6 +153,11 @@ def push_limits():
     try:
         for i, j in enumerate(S.cfg["joints"]):
             lo, hi = (0, 180) if S.unlock else (j["min"], j["max"])
+            
+            # --- FORCE FULL RANGE FOR 360 GRIPPER ---
+            if i == 5:
+                lo, hi = 0.0, 180.0
+                
             S.ser.write(f"L {i} {lo:.1f} {hi:.1f}\n".encode())
     except Exception as e: print("serial error:", e)
 
@@ -260,8 +265,13 @@ async def handle(ws, m):
         servo, S.reach, S.limited = ik(tip["x"], tip["y"], tip["z"], float(m["pitch"]), S.cfg)
         S.tgt[:4] = servo
     elif t in ("roll", "grip"):
-        i = 4 if t == "roll" else 5; J = S.cfg["joints"][i]
-        S.tgt[i] = clamp(float(m["angle"]), J["min"], J["max"])
+        i = 4 if t == "roll" else 5
+        if i == 5:
+            # 360 servo needs the full 0-180 range for speed control
+            S.tgt[i] = clamp(float(m["angle"]), 0.0, 180.0)
+        else:
+            J = S.cfg["joints"][i]
+            S.tgt[i] = clamp(float(m["angle"]), J["min"], J["max"])
     elif t == "raw":
         i = int(m["servo"]); lo, hi = lims(i); S.tgt[i] = clamp(float(m["angle"]), lo, hi)
     elif t == "nudge":

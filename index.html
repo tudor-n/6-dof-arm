@@ -28,12 +28,12 @@ canvas{width:100%;touch-action:none;background:#101215;border-radius:6px;display
   flex-direction: column;
   align-items: center;
   gap: 5px;
-  pointer-events: none; /* Let touches pass through the empty space to the canvas */
+  pointer-events: none;
   z-index: 10;
 }
 .v-slider.left { left: 15px; }
 .v-slider.right { right: 15px; }
-.v-slider > * { pointer-events: auto; } /* Re-enable touches on the slider and text */
+.v-slider > * { pointer-events: auto; }
 .v-slider label, .v-slider span {
   background: rgba(29,32,37,0.8);
   padding: 3px 6px;
@@ -117,9 +117,17 @@ function connect(){
     }updateStatus();updateCal();}
   draw();};
 }
-function setRanges(){ $('roll').min=cfg.joints[4].min;$('roll').max=cfg.joints[4].max;$('grip').min=cfg.joints[5].min;$('grip').max=cfg.joints[5].max;}
+function setRanges(){ 
+ $('roll').min=cfg.joints[4].min;$('roll').max=cfg.joints[4].max;
+ $('grip').min=0;$('grip').max=180; // Full range for 360 servo
+}
 function updateStatus(){
- for(const k of ['pitch','roll','grip']){const e=$(k);if(document.activeElement!==e){e.value=st.tool[k];$(k+'v').textContent=Math.round(st.tool[k])+'°'}}
+ for(const k of ['pitch','roll']){const e=$(k);if(document.activeElement!==e){e.value=st.tool[k];$(k+'v').textContent=Math.round(st.tool[k])+'°'}}
+ // Gripper specific label updates
+ if(document.activeElement!==$('grip')) {$('grip').value = st.tool.grip;
+   $('gripv').textContent = (st.tool.grip > 95 ? 'OPENING' : (st.tool.grip < 85 ? 'CLOSING' : 'BRAKED'));
+ }
+ 
  $('live').textContent='Live: '+(st.live?'ON':'OFF');$('live').classList.toggle('on',st.live);
  $('hw').textContent=st.hw?(st.engaged?'ESP32 connected':'ESP32 connected · servos OFF (limp) until you press Live'):(st.lost?'USB LOST - reconnecting… (Live off)':'simulation (no ESP32)');$('hw').className='chip '+(st.hw?(st.engaged?'ok':'warn'):(st.lost?'warn':''));
  const w=[];if(st.reach)w.push('out of reach');if(st.limited)w.push('joint limit hit');
@@ -130,6 +138,7 @@ function updateStatus(){
  $('calchk').style.display=bad.length?'':'none';$('calchk').textContent=bad.length?'Check calibration → '+bad.join(' · '):'';
  $('rng').textContent='joint ranges (°, 0 = reference pose): '+st.ranges.map((r,i)=>nm[i]+' '+r[0]+'…'+r[1]).join(' · ');$('readout').textContent=`tip x ${st.tool.x.toFixed(0)}  y ${st.tool.y.toFixed(0)}  z ${st.tool.z.toFixed(0)} mm   |   servos ${st.cur.map(v=>v.toFixed(0)).join(' / ')}`;
 }
+
 $('live').onclick=()=>send({type:'live',on:!(st&&st.live)});$('rlx5').onclick=()=>send({type:'relax',mask:32});$('wake').onclick=()=>send({type:'relax',mask:0});$('rlxa').onclick=()=>send({type:'relax',mask:63});
 $('rest').onclick=()=>send({type:'rest'});$('home').onclick=()=>send({type:'home'});
 $('speed').oninput=e=>{$('speedv').textContent=e.target.value+'°/s';send({type:'speed',dps:+e.target.value})};
@@ -137,7 +146,27 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('sel',x==b));
  $('move').style.display=b.dataset.tab=='move'?'':'none';$('cal').style.display=b.dataset.tab=='cal'?'':'none';
  if(b.dataset.tab=='move'){send({type:'unlock',on:false});send({type:'resync'})}else if(wz>=0)send({type:'unlock',on:true});});
-for(const k of ['pitch','roll','grip'])$(k).oninput=e=>{$(k+'v').textContent=e.target.value+'°';send({type:k,pitch:+e.target.value,angle:+e.target.value})};
+
+for(const k of ['pitch','roll'])$(k).oninput=e=>{$(k+'v').textContent=e.target.value+'°';send({type:k,pitch:+e.target.value,angle:+e.target.value})};
+
+// --- GRIPPER DEAD-MAN SWITCH LOGIC ---
+const gripSlider = $('grip');
+gripSlider.value = 90; 
+gripSlider.oninput = e => {
+  const val = +e.target.value;
+  $('gripv').textContent = (val > 95 ? 'OPENING' : (val < 85 ? 'CLOSING' : 'BRAKED'));
+  send({type:'grip', angle: val});
+};
+
+const stopGrip = () => {
+  gripSlider.value = 90;
+  $('gripv').textContent = 'BRAKED';
+  send({type:'grip', angle: 90}); // Active electronic braking
+};
+
+gripSlider.onpointerup = stopGrip;
+gripSlider.onpointercancel = stopGrip;
+
 
 // ---- throttled drag sending (25 Hz) ----
 let lastSend=0,pending=null,timer=null;
@@ -184,7 +213,7 @@ function sideDrag(n,r,z){
   liveTip.z = Math.max(5, z);
   sendDrag({type:'tip', x:liveTip.x, y:liveTip.y, z:liveTip.z, lock:$('lock').checked});
  }
- else if(n=='elbow'){sendDrag({type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)})}                       
+ else if(n=='elbow'){sendDrag({type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)})}                      
  else if(n=='wrist'){const e=q[2];sendDrag({type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)})}  
  else if(n=='dir'){const w=q[3];sendDrag({type:'joints',gamma:nrm((90-A[1]-A[2])-Math.atan2(z-w[1],r-w[0])*D)})} 
 }
@@ -212,7 +241,6 @@ side.onpointerup=side.onpointercancel=e=>{
 // Top Canvas Touch
 topv.onpointerdown=e=>{
  if(!st)return; const p=pos(topv,e), h=tp(st.pts_tgt[4][0],st.pts_tgt[4][1]);
- // Increased hit area to 50px for easier mobile thumb grabbing
  if(Math.hypot(p[0]-h[0],p[1]-h[1])<50){
   dragTop={id:e.pointerId, off:[h[0]-p[0],h[1]-p[1]]};
   topv.setPointerCapture(e.pointerId);
@@ -265,8 +293,8 @@ function updateCal(){if(!cfg||!st)return;if(wz>=0&&$('wzang')){const s=steps[wz]
 const linksNode=$('links');
 const REF=['the arm points straight FORWARD (up the screen in the top view)','the upper arm points straight UP (vertical)','the forearm is in a straight line with the upper arm','the gripper plate is in a straight line with the forearm'];
 const DIR=['turns LEFT (anticlockwise seen from above)','leans FORWARD','folds the forearm FORWARD / DOWN','tilts the gripper DOWN'];
-const NAMES=['Base','Shoulder','Elbow','Wrist pitch','Wrist roll','Gripper'];
-const steps=[{k:'start'},{k:'lim',j:5}];
+const NAMES=['Base','Shoulder','Elbow','Wrist pitch','Wrist roll'];
+const steps=[{k:'start'}];
 for(let j=0;j<4;j++)steps.push({k:'zero',j},{k:'dir',j},{k:'lim',j});
 steps.push({k:'lim',j:4},{k:'done'});
 let wz=-1;
@@ -277,7 +305,7 @@ function wzInfo(){if(wz<0||!cfg)return;const s=steps[wz],e=$('wzinfo');if(!e||s.
  e.textContent=(s.j<4?`zero ${J.zero}  sign ${J.sign>0?'+':'−'}  `:'')+`limits ${J.min} – ${J.max}`;}
 function wzRender(){
  const box=$('wiz');document.querySelector('#cal details').appendChild(linksNode);
- if(wz<0){box.innerHTML='<h3>Guided calibration</h3><p class="help">Takes about 10 minutes, one joint at a time. Turn <b>Live ON</b>, keep Speed low (about 20°/s) and keep a hand near the power switch.</p><button id="wzgo" class="on">Start</button>';
+ if(wz<0){box.innerHTML='<h3>Guided calibration</h3><p class="help">Takes about 10 minutes, one joint at a time. Gripper is skipped (360 servos cannot be calibrated). Turn <b>Live ON</b>, keep Speed low (about 20°/s) and keep a hand near the power switch.</p><button id="wzgo" class="on">Start</button>';
   $('wzgo').onclick=()=>{wz=0;send({type:'unlock',on:true});wzRender()};return}
  const s=steps[wz];let t=`<div class="mono">Step ${wz+1} / ${steps.length}</div>`;
  const nav=`<div class="row"><button id="wzb">← Back</button><button id="wzn" class="on">Next →</button></div>`;

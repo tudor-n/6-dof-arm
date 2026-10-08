@@ -47,6 +47,12 @@
       "min": 0,
       "max": 180
     },
-    {"name": "gripper", "zero": 90, "sign": 1, "min": 0, "max": 180}
+    {
+      "name": "gripper",
+      "zero": 90,
+      "sign": 1,
+      "min": 27.0,
+      "max": 88.0
+    }
   ]
 }
