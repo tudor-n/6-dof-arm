@@ -242,7 +242,7 @@ async def handle(ws, m):
         S.tgt[5] = clamp(float(m["grip"]), S.cfg["joints"][5]["min"], S.cfg["joints"][5]["max"])
         solve()
     elif t == "tip":            
-        x, y, z = max(0.0, float(m["x"])), float(m["y"]), max(5.0, float(m["z"]))
+        x, y, z = max(0.0, float(m["x"])), float(m["y"]), max(0.0, float(m["z"]))
         _, current_pitch = fk(S.tgt, S.cfg)
         
         if m.get("lock"):
