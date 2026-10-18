@@ -54,10 +54,10 @@ def get_table_z(x, y, hover=False):
 
 # TRUE 3D MARKER COORDINATES (X, Y, Z)
 MARKERS_3D = {
-    0: [-17.8,  203.2, get_table_z(-17.8,  203.2)],
-    1: [ 37.1, -190.8, get_table_z( 37.1, -190.8)],
-    2: [217.4,  157.9, get_table_z(217.4,  157.9)],
-    3: [212.1, -191.0, get_table_z(212.1, -191.0)],
+    0: [ 36.1,  185.8,  7.4],
+    1: [ 52.1, -181.8,  7.2],
+    2: [206.2,  263.9, 10.4],
+    3: [244.7, -236.3,  7.5],
 }
 
 class PrecisionVisionAgent:
