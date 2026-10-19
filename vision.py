@@ -523,6 +523,12 @@ class Vision:
                 if self.calib_rms is not None and self.calib_rms > 1.0:
                     self.warn.append(f"Camera calibration RMS is {self.calib_rms:.2f}px. Above ~1px the intrinsics "
                                      "are too poor for millimetre work - recalibrate with a larger board.")
+                elif self.calib_res and self.calib_rms is None:
+                    # Deliberately not a warning. The fit quality was never recorded, but
+                    # intrinsics_check() measures it empirically and is the better test anyway.
+                    self.log("Camera calibration RMS was never recorded for these intrinsics. "
+                             "Watch the intrinsics-check figure instead - under 2 mm means they "
+                             "are good enough for this workspace.", "info")
                 self.log(f"Camera running at {w}x{h}", "info")
                 for m in self.warn: self.log(m, "warn")
             frame = cv2.remap(raw, self.m1, self.m2, cv2.INTER_LINEAR)

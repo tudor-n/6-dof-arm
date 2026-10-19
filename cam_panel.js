@@ -177,7 +177,9 @@
       if (V.pose) w.add(V.healthy ? 'ok' : 'err', (V.healthy ? 'Pose OK - ' : 'POSE UNRELIABLE - ') + V.health);
       if (V.rejects) w.add('warn', V.rejects + ' pose solves rejected in a row - the pose on screen is stale. Check the log for why.');
       if (V.calib && V.calib.rms != null && V.calib.rms > 1.0) w.add('warn', 'Camera calibration RMS is ' + V.calib.rms.toFixed(2) + ' px. Above ~1 px the intrinsics are too coarse for mm work - rerun calibrate_camera.py with a larger board.');
-      if (V.calib && V.calib.rms == null) w.add('warn', 'No camera_calib.json: the stream resolution cannot be checked against the calibration. Rerun calibrate_camera.py.');
+      // 'no provenance file' and 'file present but RMS unrecorded' are different things:
+      // only the first stops the stream resolution being checked.
+      if (V.calib && V.calib.res == null) w.add('warn', 'No camera_calib.json: the stream resolution cannot be checked against the calibration. Rerun calibrate_camera.py.');
       if (V.busy) w.add('ok', 'Pick running. STOP cancels.');
     }
     var key = chips.join('\n');

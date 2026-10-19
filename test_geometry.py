@@ -807,6 +807,34 @@ def test_plate_tilt_would_corrupt_axis_derived_angles():
         "applying a tilt to already-plate-relative data must visibly shift the zero"
 
 
+# ------------------------------------------------- camera calibration provenance
+
+def test_calibration_provenance_is_recorded_and_loadable():
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    assert vis.calib_res == (1920, 1080), f"expected a 1920x1080 calibration, got {vis.calib_res}"
+
+
+def test_recorded_resolution_matches_the_principal_point():
+    """The resolution in camera_calib.json is inferred, so keep it honest: the principal
+    point must sit near the centre of that frame and nowhere else plausible."""
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    w, h = vis.calib_res
+    cx, cy = vis.K[0, 2], vis.K[1, 2]
+    assert abs(cx - w / 2) / w < 0.05, f"cx {cx:.1f} is not near the centre of {w}"
+    assert abs(cy - h / 2) / h < 0.05, f"cy {cy:.1f} is not near the centre of {h}"
+    for ow, oh in [(1280, 720), (1280, 960), (640, 480)]:
+        off = max(abs(cx - ow / 2) / ow, abs(cy - oh / 2) / oh)
+        assert off > 0.05, f"{ow}x{oh} is also plausible - the recorded resolution is a guess"
+
+
+def test_unrecorded_rms_is_not_treated_as_a_missing_file():
+    """These are different conditions: only a missing file stops the resolution check."""
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    assert vis.calib_rms is None, "the old calibrate_camera.py discarded the RMS"
+    assert vis.calib_res is not None, "but the provenance file still records the resolution"
+    assert vis.status()["calib"]["res"] == [1920, 1080]
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():
