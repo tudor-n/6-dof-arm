@@ -34,105 +34,77 @@ changes break the UI" from anything camera-related.
 
 ---
 
-## 1. Rebuild the marker model from the tape  **(do this first)**
+## 1. Measure the base servo gain  **(start here)**
 
-The tape measurements are in and they changed the plan. Your arm-measured marker model is
-the wrong **shape**, not just misplaced:
+Superseded step: this used to say "rebuild from tape". **Do not press "Rebuild from tape"
+any more.** Your Cartesian measurements are already installed in `vision.json` and are
+strictly better - the tape only fixed the markers' shape, leaving placement to the arm,
+whereas the Cartesian numbers fix both and involve the arm nowhere. Rebuilding would throw
+that away and reintroduce the placement error. The button stays for the case where you have
+tape distances but no Cartesian measurements.
 
-| pair | tape | model | diff |
-|---|---|---|---|
-| 0-1 (near edge) | 392 | 351.9 | **-40.1** |
-| 0-2 | 152 | 188.5 | +36.5 |
-| 0-3 | 420 | 451.6 | +31.6 |
-| 1-2 | 436 | 472.2 | +36.2 |
-| 1-3 | 174 | 208.6 | +34.6 |
-| 2-3 (far edge) | 401 | 495.6 | **+94.6** |
+### What is wrong
 
-Your real layout is a near-rectangle (392 vs 401, ratio 1.02). The model thinks it is a
-strong trapezoid (352 vs 496, ratio 1.41). Your six measurements close as a planar
-quadrilateral to 1.0 mm, so the tape is sound and the arm is not.
+Forward kinematics over-reports base yaw by about a third, because the base servo physically
+turns roughly 0.75 degrees per degree commanded. All six servos share the same pulse mapping,
+so all of them under-rotate; the arm ends up less folded than commanded, which is why reach
+is underestimated by 23% at the near markers and only 4% at the far ones, and why the real
+marker rectangle came out as a trapezoid.
 
-These are already saved in `vision.json`, so **the server will complain loudly at startup**
-until you rebuild. That is expected, not a fault.
+### Measuring it without a protractor
 
-**Camera tab -> Marker calibration -> Rebuild from tape.** You should see:
+You already know where the markers truly are, which makes them a calibration target. Their
+true azimuths from the base, computed from your own measurements:
 
-```
-tape shape closes to 1.0 mm | placed onto the arm-measured points with 38.3 mm RMS
-residual (per marker: 0:24, 1:22, 2:50, 3:48 mm)
-```
+| marker | true azimuth |
+|---|---|
+| ID0 | +54.62 deg |
+| ID1 | -61.37 deg |
+| ID2 | +35.17 deg |
+| ID3 | -34.71 deg |
 
-Afterwards the tape-vs-model readout should show every pair within about 1 mm.
-
-**What this does and does not fix.** The model now has the correct *shape*, so the camera
-pose becomes trustworthy - solvePnP is far more sensitive to shape than to placement. The
-*placement* still comes from the arm, so expect a residual systematic offset of a couple of
-cm until forward kinematics is fixed. Judge the result on whether the grid is square and
-un-mirrored and whether clicking is self-consistent, not on absolute accuracy yet.
-
-The 38 mm residual - 50 mm at the far markers against 22 mm at the near ones - is the real
-headline: **FK error grows with reach.** `docs/ROADMAP.md` section 2 has the candidates and
-why neither a pure reach error nor a pure yaw error explains it on its own.
-
-### The eight numbers that would finish this
-
-Think of the table as graph paper with the **robot's base at (0, 0)** and the robot looking
-straight down the X axis. I need each marker's X and Y in mm. That is it - four markers, two
-numbers each.
+For each marker: turn Live on, jog the tip onto the marker centre, and **read the base servo
+value** (joint 0). Then
 
 ```
-                    the robot looks this way
-                              |
-                   +X  (forward, away from you)
-                              ^
-                              |
-          marker 2  *         |         *  marker 3
-                    :         |         :
-                    :     Y2  |  Y3     :
-                    :<------- | ------->:
-          marker 0  *         |         *  marker 1
-                    :         |         :
-                    :         | X0      :
-                    :         |         :
-     +Y  <--------------------O-------------------->  -Y
-      (robot's LEFT)     base axis            (robot's RIGHT)
+gain = true_azimuth / (base_servo - 90)
 ```
 
-**How to measure it**
+using 90 as the base zero from `config.json`. Four markers gives four independent estimates;
+they should cluster. Expect something near 0.75. Put the average into `config.json`:
 
-1. Send the base to its zero (servo 90) so the arm points straight ahead. Lay a tape measure
-   or a taut string flat on the table, starting under the **centre of the base's rotation**
-   and running straight out the way the arm is pointing. That string is your X axis.
-2. For each marker, two readings:
-   - **Y** - the straight-across distance from the string to the marker's centre, at right
-     angles to the string. Use a book corner or a set square so it really is at right angles.
-     **Positive if the marker is on the robot's LEFT, negative if on its RIGHT.**
-   - **X** - read off the string at the point where that right-angle line meets it.
+```json
+{"name": "base", "gain": 0.75, "zero": 90.0, "sign": 1, "min": 5, "max": 175}
+```
 
-So for your layout I am expecting roughly: markers 0 and 2 with **positive** Y, markers 1 and
-3 with **negative** Y, and markers 2 and 3 with the larger X since they sit further out.
+Sanity check as you go: if `base_servo - 90` comes out around +73 at ID0 where the true
+azimuth is +54.6, that is the 1.33 over-reporting, and gain = 54.6/73 = 0.75.
 
-**Two things that would spoil it**
+### The other joints
 
-- The origin is the base's **axis of rotation** - the centre of the plate that turns - not the
-  corner or edge of the base plate. If the base plate is 80 mm across, the edge is 40 mm from
-  where I need you to start.
-- Measure to the **centre of each marker square**, the same point the arm was told to touch.
+If the pulse mapping is the cause then every joint shares the same gain, so start by putting
+the same number on shoulder, elbow and wrist pitch, and check whether reach stops being
+underestimated. The marker distances from the base are the reference:
 
-**Why this finishes it.** Your six tape distances fixed the markers' shape relative to each
-other, but said nothing about where that shape sits relative to the robot - which is why the
-rebuild still leans on the arm for placement and still carries a couple of cm of offset.
-These eight numbers put the shape in the robot's own frame using only a tape measure, so the
-marker model stops depending on forward kinematics entirely. The camera pose then becomes
-trustworthy in absolute terms, and whatever error is left is purely the arm not going where
-it is told - which is directly measurable against a reference you trust.
+| marker | true distance from base axis |
+|---|---|
+| ID0 | 231.8 mm |
+| ID1 | 227.9 mm |
+| ID2 | 348.9 mm |
+| ID3 | 353.0 mm |
 
-**If the right angles are awkward**, there is a fallback: measure the four straight-line
-distances from the base rotation axis to each marker centre. With the six you already gave,
-that fixes everything except which direction counts as straight ahead - so I would need one
-extra angular reference, such as the perpendicular offset of any single marker, or where the
-string passes between two of them. Same effort in practice, more ways to go wrong, so prefer
-the X/Y method above.
+Touch each marker and compare the reported tool point against these. Reach should come out
+right at both near and far markers; if it is right at one and wrong at the other, the gains
+differ per joint and need measuring individually.
+
+### Why compensate in software rather than fix the firmware
+
+The tidier-looking fix is to widen `SERVOMIN`/`SERVOMAX` in `src/main.c` so a commanded
+degree really is a degree. **Do not start there.** Those constants currently clamp how far
+the servos can be driven, and every joint `min`/`max` in `config.json` is expressed in the
+same servo units - widening the range risks driving joints into their mechanical stops and
+invalidates all six limits at once. Per-joint `gain` is reversible, costs nothing, and keeps
+the limits valid. Revisit the firmware as a cleanup once the arm is accurate.
 
 ## 2. Camera, no arm
 
@@ -297,7 +269,7 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.Co
 
 With these I can tell you immediately whether the diagnosis was right and what is next:
 
-1. The `Rebuild from tape` output line, and the tape-vs-model readout afterwards.
+1. The four base-gain estimates from step 1, and the base servo value you read at each marker.
 2. The status line from step 2, verbatim - both reprojection figures and the camera position.
 3. Whether the grid is still mirrored.
 4. Click accuracy at each of the four markers (clicked vs. stored coordinates).
