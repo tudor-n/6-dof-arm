@@ -23,6 +23,7 @@ is a ray from the camera onto the fitted table plane, expressed in arm coordinat
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the software is put together and why |
 | [docs/CALIBRATION.md](docs/CALIBRATION.md) | **Start here when accuracy is wrong.** Every calibration procedure, in dependency order |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Where this is going, and the known-unknowns |
+| [TEST_INSTRUCTIONS.md](TEST_INSTRUCTIONS.md) | How to test the current working branch, and what will surprise you |
 
 ## Quickstart
 

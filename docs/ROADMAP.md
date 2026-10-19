@@ -85,8 +85,8 @@ Separately, a near-flat plane in arm coordinates is what the geometry predicts a
 arm's +Z is normal to its base plate, not vertical, so bolting the base to the sloping desk
 tilts the whole coordinate frame with the desk - and the markers sit on that same surface.
 The desk's slope is real but does not appear in these coordinates; it matters for gravity,
-not for geometry. **This assumes the base plate really is parallel to the desk**, which the
-M5-in-M6 holes and the PETG spacers do not guarantee - see HARDWARE.md.
+not for geometry. The base is confirmed bolted parallel and flat to the desk, carrying the
+same slope, so this holds - see HARDWARE.md.
 
 Deriving the plane from the markers is therefore the right design, and the old constants
 are obsolete.
