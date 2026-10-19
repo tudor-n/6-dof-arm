@@ -17,7 +17,6 @@ input,textarea{-webkit-user-select:text;user-select:text}
 main{position:absolute;left:0;right:0;bottom:0;overflow:hidden}
 main.scroll{overflow-y:auto;-webkit-overflow-scrolling:touch}
 #move{justify-content:center;text-align:center}#move .card{text-align:left}
-#mvctl .row{margin:4px 0}#mvctl .mono{font-size:12px}
 header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:10px 14px;background:#1d2025;border-bottom:1px solid #2c3138}
 button{background:#2a2f37;color:#e6e8eb;border:1px solid #2c3138;border-radius:6px;padding:7px 12px;font:inherit;cursor:pointer}
 button:hover{border-color:#4ea1ff}button.on{background:#38c172;color:#06210f;border-color:#38c172;font-weight:600}
@@ -79,7 +78,6 @@ td input[type=range]{width:100%}input[type=number]{width:70px;background:#101215
 .noflex .topcard{display:inline-block;vertical-align:top;width:41%}
 .noflex .row>*{display:inline-block;vertical-align:middle;margin-right:8px}
 .noflex .row input[type=range]{width:55%}
-.noflex #mvctl input[type=range]{width:35%}
 .noflex .v-slider{display:block;text-align:center}
 .noflex .v-slider>*{display:block;margin:0 auto 5px}
 /* a vertical range input does not exist here: rotate a horizontal one; the negative margins give it a 32x160 footprint */
@@ -114,10 +112,6 @@ td input[type=range]{width:100%}input[type=number]{width:70px;background:#101215
     <canvas id="side" width="560" height="460"></canvas>
   </div>
   <div class="card topcard"><canvas id="top" width="420" height="460"></canvas></div>
-  <div class="card" id="mvctl" style="flex:1 1 100%">
-   <div class="row"><label>Tool pitch</label><input id="pitch" type="range" min="-135" max="90" step="1"><span id="pitchv"></span><label style="width:auto;color:#e6e8eb" title="otherwise the gripper angle is chosen automatically"><input type="checkbox" id="lock"> Lock pitch while dragging the tip</label></div>
-   <div class="mono" id="readout"></div><div class="mono" id="rng"></div><div id="calchk" class="chip warn" style="display:none;margin-top:8px"></div><div id="restnote" class="chip ok" style="display:none;margin-top:8px"></div>
-  </div>
  </div>
  <div id="cal" class="card panel" style="display:none">
   <div id="wiz"></div>
@@ -218,7 +212,7 @@ window.ARM={send:send,listen:function(fn){listeners.push(fn);},onRender:function
 listeners.push(function(m){
  if(m.type=='cfg'){cfg=m.cfg;drawKey=null;buildCal();setRanges();}
  else if(m.type=='tool'){}
- else if(m.type=='restinfo'){var n=$('restnote');n.style.display='';n.textContent='Rest servo angles: '+m.servo.map(function(v){return v.toFixed(0);}).join(', ')+(m.clipped?'  (some joints hit their limits - check)':'')+'  → put these in firmware cur[]/tgt[] and START_POSE if you want power-on to start here.';}
+
  else if(m.type=='state'){st=m;stDirty=true;if(!dragSide && !dragTop && st.pts_tgt) {
      var t4 = tipOf(st.pts_tgt); liveTip = { x: t4[0], y: t4[1], z: t4[2] };
    }}
@@ -233,17 +227,17 @@ renderers.push(function(){
 });
 
 // ---- fixed layout: <main> fills the screen under the header; on the Move tab the two views are
-// sized so that views + control card fit exactly (no scrolling), keeping the canvases' aspect ratio
+// sized so that they fill the screen exactly (no scrolling), keeping the canvases' aspect ratio
 var fitKey=null;
 function fit(){
  var mn=document.querySelector('main'),mv=shown('move'),hh=$('hdr').offsetHeight,W=window.innerWidth,H=window.innerHeight;
- var ctl=mv?$('mvctl').offsetHeight:0,key=[W,H,hh,ctl,mv].join();
+ var key=[W,H,hh,mv].join();
  if(key===fitKey)return;fitKey=key;
  mn.style.top=hh+'px';tog(mn,'scroll',!mv);if($('logcard'))show($('logcard'),!mv);
  if(!mv){return;}
  mn.scrollTop=0;
- // 24 main padding, 12 gap between rows / cards, 22 card padding+border, a few px of slack
- var h=Math.min(H-hh-24-12-ctl-22-4,(W-24-12-44-8)/((560+420)/460));
+ // 24 main padding, 12 gap between the cards, 22 card padding+border, a few px of slack
+ var h=Math.min(H-hh-24-22-4,(W-24-12-44-8)/((560+420)/460));
  h=Math.floor(Math.max(120,h));
  each([[side,560,'.sidecard'],[topv,420,'.topcard']],function(a){
   var w=Math.floor(h*a[1]/460),card=document.querySelector(a[2]);
@@ -266,7 +260,7 @@ function setRanges(){
 }
 function gripText(v){return v > 95 ? 'OPENING' : (v < 85 ? 'CLOSING' : 'BRAKED');}
 function updateStatus(){
- each(['pitch','roll'],function(k){var e=$(k);if(document.activeElement!==e){val(e,st.tool[k]);txt($(k+'v'),Math.round(st.tool[k])+'°');}});
+ each(['roll'],function(k){var e=$(k);if(document.activeElement!==e){val(e,st.tool[k]);txt($(k+'v'),Math.round(st.tool[k])+'°');}});
  // Gripper specific label updates
  if(document.activeElement!==$('grip')) {val($('grip'), st.tool.grip);
    txt($('gripv'), gripText(st.tool.grip));
@@ -276,12 +270,6 @@ function updateStatus(){
  txt($('hw'),st.hw?(st.engaged?'ESP32 connected':'ESP32 connected · servos OFF (limp) until you press Live'):(st.lost?'USB LOST - reconnecting… (Live off)':'simulation (no ESP32)'));cls($('hw'),'chip '+(st.hw?(st.engaged?'ok':'warn'):(st.lost?'warn':'')));
  var w=[];if(st.reach)w.push('out of reach');if(st.limited)w.push('joint limit hit');
  show($('warn'),w.length);txt($('warn'),w.join(' · '));cls($('warn'),'chip warn');
- var nm=['base','shoulder','elbow','wrist'],bad=[];
- st.ranges.forEach(function(r,i){if(r[1]-r[0]<25)bad.push(nm[i]+' range is only '+(r[1]-r[0])+'° ('+r[0]+'…'+r[1]+')');});
- if(st.ranges[2][1]<10)bad.push('elbow can only bend backwards ('+st.ranges[2][0]+'…'+st.ranges[2][1]+'): redo elbow zero/direction');
- show($('calchk'),bad.length);txt($('calchk'),bad.length?'Check calibration → '+bad.join(' · '):'');
- txt($('rng'),'joint ranges (°, 0 = reference pose): '+st.ranges.map(function(r,i){return nm[i]+' '+r[0]+'…'+r[1];}).join(' · '));
- txt($('readout'),'tip x '+st.tool.x.toFixed(0)+'  y '+st.tool.y.toFixed(0)+'  z '+st.tool.z.toFixed(0)+' mm   |   servos '+st.cur.map(function(v){return v.toFixed(0);}).join(' / '));
 }
 
 $('live').onclick=function(){send({type:'live',on:!(st&&st.live)});};$('rlx5').onclick=function(){send({type:'relax',mask:32});};$('wake').onclick=function(){send({type:'relax',mask:0});};$('rlxa').onclick=function(){send({type:'relax',mask:63});};
@@ -292,7 +280,7 @@ each(document.querySelectorAll('.tab'),function(b){b.onclick=function(){
  $('move').style.display=b.getAttribute('data-tab')=='move'?'':'none';$('cal').style.display=b.getAttribute('data-tab')=='cal'?'':'none';
  if(b.getAttribute('data-tab')=='move'){send({type:'unlock',on:false});send({type:'resync'});}else if(wz>=0)send({type:'unlock',on:true});schedule();};});
 
-each(['pitch','roll'],function(k){onRange($(k),function(e){$(k+'v').textContent=e.target.value+'°';send({type:k,pitch:+e.target.value,angle:+e.target.value});});});
+each(['roll'],function(k){onRange($(k),function(e){$(k+'v').textContent=e.target.value+'°';send({type:k,angle:+e.target.value});});});
 
 // --- GRIPPER DEAD-MAN SWITCH LOGIC ---
 var gripSlider = $('grip');
@@ -347,7 +335,7 @@ function draw(){
  line(sc,SP(st.pl_cur),col,7);line(tc,TP(st.pts_cur),col,7);
  SP(st.pl_cur).forEach(function(p){dot(sc,p,5,'#14161a');});TP(st.pts_cur).forEach(function(p){dot(tc,p,5,'#14161a');});
  each(sideHandles(),function(h){if(h.n=='tip')dot(sc,h.px,h.rad,'rgba(78,161,255,.4)','#4ea1ff');else if(h.n=='dir')diamond(sc,h.px,h.rad,'rgba(240,160,48,.45)','#f0a030');else dot(sc,h.px,h.rad,'rgba(255,255,255,.15)','#e6e8eb');});
- dot(tc,tp(tipOf(st.pts_tgt)[0],tipOf(st.pts_tgt)[1]),16,'rgba(78,161,255,.4)','#4ea1ff');
+ dot(tc,topHandle(),HR,'rgba(78,161,255,.4)','#4ea1ff');
 }
 // canvas pixel under a mouse event / Touch (page coordinates: old Android WebKit gets clientX wrong)
 function pos(cv,e){var b=cv.getBoundingClientRect(),x=e.pageX-(b.left+window.pageXOffset),y=e.pageY-(b.top+window.pageYOffset);return[x*cv.width/b.width,y*cv.height/b.height];}
@@ -364,7 +352,7 @@ function sideDrag(n,r,z){
   liveTip.x = rr * Math.cos(yaw);
   liveTip.y = rr * Math.sin(yaw);
   liveTip.z = Math.max(5, z);
-  sendDrag({type:'tip', x:liveTip.x, y:liveTip.y, z:liveTip.z, lock:$('lock').checked});
+  sendDrag({type:'tip', x:liveTip.x, y:liveTip.y, z:liveTip.z, lock:false});
  }
  else if(n=='elbow'){sendDrag({type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)});}
  else if(n=='wrist'){var e=q[2];sendDrag({type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)});}
@@ -392,9 +380,19 @@ track(side,{
 // added to the base angle it had at touch-down; shoulder, elbow and wrist are not sent, so the reach
 // and the height stay exactly as they are wherever the arm points.
 function bearing(p){return Math.atan2(TO.x-p[0],TO.y-p[1])*D;}
+// The handle sits on the base's bearing at the tip's distance, but is pulled in toward the base so it
+// never leaves the view: a tip outside the square would otherwise hide the handle and make it ungrabbable.
+var HR=16, HM=HR+6;
+function topHandle(){
+ var t=tipOf(st.pts_tgt),p=tp(t[0],t[1]),a=st.ang[0]/D,dx=-Math.sin(a),dy=-Math.cos(a);
+ var d=Math.max(40,hyp(p[0]-TO.x,p[1]-TO.y));
+ if(dx>1e-6)d=Math.min(d,(topv.width-HM-TO.x)/dx);else if(dx<-1e-6)d=Math.min(d,(HM-TO.x)/dx);
+ if(dy>1e-6)d=Math.min(d,(topv.height-HM-TO.y)/dy);else if(dy<-1e-6)d=Math.min(d,(HM-TO.y)/dy);
+ return [TO.x+dx*d,TO.y+dy*d];
+}
 track(topv,{
  down:function(id,e){
-  if(!st)return false; var p=pos(topv,e), h=tp(tipOf(st.pts_tgt)[0],tipOf(st.pts_tgt)[1]);
+  if(!st)return false; var p=pos(topv,e), h=topHandle();
   if(hyp(p[0]-h[0],p[1]-h[1])<50){dragTop={id:id, yaw0:st.ang[0], b0:bearing(p)};return true;}
   return false;
  },
