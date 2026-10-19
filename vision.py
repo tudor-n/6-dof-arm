@@ -23,6 +23,11 @@ DEFAULT_SETTINGS = {
 DEFAULT_ROLL = {"zero": 90.0, "sign": 1}   # servo value where the jaws close along the arm; +1 = servo up turns jaws CCW from above
 DISP_W = 960
 
+MIN_CAM_HEIGHT_MM = 100.0    # a solve putting the camera lower than this above the table is
+                             # the mirrored branch of the coplanar-PnP ambiguity - reject it
+MAX_SOLVE_REPROJ_PX = 4.0    # per-frame solves worse than this never enter the average
+MAX_POSE_REPROJ_PX = 3.0     # worst-marker error above this means the pose is not trustworthy
+
 
 def fit_rigid_2d(old, new):
     old, new = np.asarray(old, float), np.asarray(new, float)
@@ -33,6 +38,29 @@ def fit_rigid_2d(old, new):
         Vt[-1] *= -1
         R = Vt.T @ U.T
     return R, cn - R @ co
+
+
+def avg_rotation(rvecs):
+    """Mean of rotations supplied as Rodrigues vectors.
+
+    Rodrigues vectors must NOT be averaged componentwise. R(a, t) == R(-a, 2pi - t), so
+    every rotation has two vector forms, and near |rvec| = pi the axis sign flips between
+    frames - which is exactly where a camera looking down at a +Z-up table frame sits.
+    Averaging the vectors there collapses toward identity and the projected world comes
+    out mirrored. Average the rotation matrices instead, then project back onto SO(3)
+    using the same determinant guard as fit_rigid_2d.
+    """
+    M = np.mean([cv2.Rodrigues(np.asarray(r, float).reshape(3, 1))[0] for r in rvecs], axis=0)
+    U, _, Vt = np.linalg.svd(M)
+    if np.linalg.det(U @ Vt) < 0:
+        U[:, -1] *= -1
+    return cv2.Rodrigues(U @ Vt)[0]
+
+
+def camera_centre(rvec, tvec):
+    """Camera position expressed in the arm's base frame."""
+    R, _ = cv2.Rodrigues(np.asarray(rvec, float).reshape(3, 1))
+    return (-R.T @ np.asarray(tvec, float).reshape(3, 1)).ravel()
 
 
 class Vision:
@@ -51,9 +79,16 @@ class Vision:
         self.Z = np.zeros((4, 1))
         self.problem = ""
         self.warn = []
+        self.calib_res = None; self.calib_rms = None
         for d in (self.here, Path.cwd()):
             try:
-                self.K = np.load(d / "camera_matrix.npy"); self.D = np.load(d / "dist_coeffs.npy"); break
+                self.K = np.load(d / "camera_matrix.npy"); self.D = np.load(d / "dist_coeffs.npy")
+                try:                      # written by calibrate_camera.py; older runs lack it
+                    c = json.loads((d / "camera_calib.json").read_text())
+                    self.calib_res = tuple(c["resolution"]); self.calib_rms = c.get("rms")
+                except Exception:
+                    pass
+                break
             except Exception:
                 pass
         if self.K is None:
@@ -66,6 +101,9 @@ class Vision:
         self.hist = deque(maxlen=15); self.rvec = self.tvec = None
         self.pose_locked = False
         self.err, self.proj, self.seen = {}, {}, []
+        # pose diagnostics: raw_err is the per-frame solve, avg_err the pose actually in use
+        self.raw_err = self.avg_err = None
+        self.rejects = 0; self.diag = ""; self._healthy = None
         # live data
         self.running = False
         self.frame = None; self.res = (0, 0); self.fps = 0.0
@@ -144,6 +182,51 @@ class Vision:
         self.touched = {}; self.measured = False; self.fit_info = ""
         self._fit_plane(); self.hist.clear(); self.rvec = self.tvec = None; self.save()
 
+    # ---------- camera pose ----------
+    def pose_is_sane(self, rvec, tvec):
+        """Reject the mirrored solution: the camera must be above the table, not under it.
+
+        Four near-coplanar points admit two poses that both reproject almost perfectly,
+        one of them reflected through the marker plane. The reflected one puts the camera
+        below the table, which is physically impossible here, so this check removes it
+        deterministically instead of hoping the solver picks the right branch.
+        """
+        cam = camera_centre(rvec, tvec)
+        return bool(cam[2] > self.table_z(cam[0], cam[1]) + MIN_CAM_HEIGHT_MM)
+
+    def solve_pose(self, obj, px):
+        """Camera pose from marker object points and their pixel centres.
+
+        Returns (rvec, tvec, mean_reproj_px), or None when the solve is unusable.
+        Uses SQPNP, which is globally optimal, rather than ITERATIVE, which descends into
+        a local minimum on near-coplanar point sets. (IPPE returns both planar branches
+        explicitly but demands exact coplanarity; these markers have a ~0.4 mm Z spread.)
+        """
+        obj = np.asarray(obj, np.float32).reshape(-1, 3)
+        px = np.asarray(px, np.float32).reshape(-1, 2)
+        ok, rv, tv = cv2.solvePnP(obj, px, self.K, self.Z, flags=cv2.SOLVEPNP_SQPNP)
+        if not ok:
+            return None
+        rv, tv = cv2.solvePnPRefineLM(obj, px, self.K, self.Z, rv, tv)
+        if not self.pose_is_sane(rv, tv):
+            return None
+        pr = cv2.projectPoints(obj.reshape(-1, 1, 3), rv, tv, self.K, self.Z)[0].reshape(-1, 2)
+        return rv, tv, float(np.mean(np.linalg.norm(pr - px, axis=1)))
+
+    def pose_health(self):
+        """(ok, message) - drives the UI badge and gates picking."""
+        if self.K is None:
+            return False, self.problem or "no camera calibration"
+        if self.rvec is None:
+            return False, "no camera pose yet (all 4 markers must be visible at once)"
+        if not self.err:
+            return False, "no markers visible - pose is stale"
+        worst = max(self.err.values())
+        if worst > MAX_POSE_REPROJ_PX:
+            return False, (f"camera pose unreliable: worst marker reprojects {worst:.1f}px "
+                           f"(limit {MAX_POSE_REPROJ_PX:.0f}px)")
+        return True, f"pose ok (worst marker {worst:.1f}px)"
+
     # ---------- geometry ----------
     def pixel_to_table(self, u, v, raw=False, z_off=None):
         if self.rvec is None or self.K is None: return None
@@ -173,7 +256,11 @@ class Vision:
 
     def _open(self):
         cap = cv2.VideoCapture(self.cam_index, cv2.CAP_DSHOW) if os.name == "nt" else cv2.VideoCapture(self.cam_index)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        # Lock MJPG first: without it the camera may negotiate a different (often cropped)
+        # mode than the one the intrinsics were calibrated at, which silently invalidates K.
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+        w, h = self.calib_res or (1920, 1080)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, w); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
         return cap
 
     def _capture_loop(self):
@@ -191,10 +278,21 @@ class Vision:
                 size = (w, h); self.res = size
                 self.m1, self.m2 = cv2.initUndistortRectifyMap(self.K, self.D, None, self.K, size, cv2.CV_16SC2)
                 self.warn = []
-                cx, cy = self.K[0, 2], self.K[1, 2]
-                if abs(cx - w / 2) > 0.15 * w or abs(cy - h / 2) > 0.15 * h:
-                    self.warn.append(f"Calibration centre ({cx:.0f},{cy:.0f}) is far from the middle of a {w}x{h} frame: "
-                                     "the camera was probably calibrated at a different resolution.")
+                if self.calib_res and tuple(self.calib_res) != (w, h):
+                    self.warn.append(f"Camera is streaming {w}x{h} but the intrinsics were calibrated at "
+                                     f"{self.calib_res[0]}x{self.calib_res[1]}. camera_matrix.npy does not "
+                                     "apply to this frame size, so every table coordinate will be wrong. "
+                                     "Re-run calibrate_camera.py at this resolution.")
+                elif not self.calib_res:
+                    self.warn.append("camera_calib.json is missing, so the stream resolution cannot be checked "
+                                     "against the calibration. Re-run calibrate_camera.py to record it.")
+                    cx, cy = self.K[0, 2], self.K[1, 2]
+                    if abs(cx - w / 2) > 0.15 * w or abs(cy - h / 2) > 0.15 * h:
+                        self.warn.append(f"Calibration centre ({cx:.0f},{cy:.0f}) is far from the middle of a "
+                                         f"{w}x{h} frame: it was probably calibrated at another resolution.")
+                if self.calib_rms is not None and self.calib_rms > 1.0:
+                    self.warn.append(f"Camera calibration RMS is {self.calib_rms:.2f}px. Above ~1px the intrinsics "
+                                     "are too poor for millimetre work - recalibrate with a larger board.")
                 self.log(f"Camera running at {w}x{h}", "info")
                 for m in self.warn: self.log(m, "warn")
             frame = cv2.remap(raw, self.m1, self.m2, cv2.INTER_LINEAR)
@@ -217,14 +315,22 @@ class Vision:
         self.seen = sorted(centers)
         need = sorted(self.markers)
         if all(i in centers for i in need) and not self.pose_locked:
-            ok, rv, tv = cv2.solvePnP(np.array([self.markers[i] for i in need], np.float32),
-                                      np.array([centers[i] for i in need], np.float32),
-                                      self.K, self.Z, flags=cv2.SOLVEPNP_ITERATIVE)
-            if ok:
-                first = self.rvec is None
-                self.hist.append((rv.copy(), tv.copy()))
-                self.rvec = np.mean([h[0] for h in self.hist], axis=0); self.tvec = np.mean([h[1] for h in self.hist], axis=0)
-                if first: self.log("Camera pose found.", "info")
+            got = self.solve_pose([self.markers[i] for i in need], [centers[i] for i in need])
+            if got is None:
+                self._reject("the solve put the camera below the table (mirrored solution), or the "
+                             "marker coordinates and the camera intrinsics disagree")
+            else:
+                rv, tv, self.raw_err = got
+                if self.raw_err > MAX_SOLVE_REPROJ_PX:
+                    self._reject(f"{self.raw_err:.1f}px raw reprojection, limit {MAX_SOLVE_REPROJ_PX:.0f}px - "
+                                 "the stored marker coordinates or camera_matrix.npy are wrong")
+                else:
+                    first = self.rvec is None
+                    self.rejects = 0
+                    self.hist.append((rv.copy(), tv.copy()))
+                    self.rvec = avg_rotation([h[0] for h in self.hist])
+                    self.tvec = np.mean([h[1] for h in self.hist], axis=0)
+                    if first: self.log("Camera pose found.", "info")
         self.err, self.proj = {}, {}
         if self.rvec is not None and centers:
             have = [i for i in centers if i in self.markers]
@@ -232,7 +338,27 @@ class Vision:
                 pr = self.project([self.markers[i] for i in have])
                 for k, i in enumerate(have):
                     self.proj[i] = pr[k]; self.err[i] = float(np.linalg.norm(pr[k] - centers[i]))
+                self.avg_err = float(np.mean(list(self.err.values())))
+                cam = camera_centre(self.rvec, self.tvec)
+                self.diag = (f"raw {self.raw_err:.2f}px | in-use {self.avg_err:.2f}px | per-marker "
+                             + " ".join(f"{i}:{self.err[i]:.1f}" for i in sorted(self.err))
+                             + f" | camera at X{cam[0]:.0f} Y{cam[1]:.0f} Z{cam[2]:.0f}")
+                self._health_transition()
         return corners, ids
+
+    def _reject(self, why):
+        """Throttled complaint about an unusable solve - never silently use a bad pose."""
+        self.rejects += 1
+        if self.rejects % 60 == 1:
+            self.log(f"pose solve rejected ({self.rejects}x): {why}", "warn")
+
+    def _health_transition(self):
+        """Log only when pose health changes, so the UI log stays readable."""
+        ok, msg = self.pose_health()
+        if ok != self._healthy:
+            self._healthy = ok
+            self.log(f"camera pose {'HEALTHY' if ok else 'UNHEALTHY'}: {msg} | {self.diag}",
+                     "ok" if ok else "err")
 
     def _axis(self, frame, box):
         H, W = frame.shape[:2]
@@ -358,11 +484,20 @@ class Vision:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
             if dt["line"]: cv2.line(d, P(*dt["line"][0]), P(*dt["line"][1]), (0, 0, 255), 2)
         errs = list(self.err.values())
-        if not pose: msg, col = "SEARCHING FOR ALL 4 MARKERS", (0, 0, 255)
+        if not pose:
+            msg, col = "SEARCHING FOR ALL 4 MARKERS", (0, 0, 255)
         else:
-            msg = ("POSE LOCKED" if self.pose_locked else "POSE LIVE") + (f"  reproj {np.mean(errs):.1f}px" if errs else "")
-            col = (0, 255, 0) if (errs and max(errs) < 3) else (0, 165, 255)
+            ok, _ = self.pose_health()
+            msg = ("POSE LOCKED" if self.pose_locked else "POSE LIVE")
+            if errs:
+                msg += f"  worst {max(errs):.1f}px  mean {np.mean(errs):.1f}px"
+            if self.raw_err is not None:
+                msg += f"  (solve {self.raw_err:.1f}px)"
+            col = (0, 255, 0) if ok else (0, 165, 255)
         cv2.putText(d, msg, (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, col, 2)
+        if pose and self.rejects:
+            cv2.putText(d, f"{self.rejects} solves rejected - pose is stale", (12, 46),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
         ok, buf = cv2.imencode(".jpg", d, [cv2.IMWRITE_JPEG_QUALITY, 80])
         if ok: self.jpg = buf.tobytes(); self.seq += 1
 
@@ -381,8 +516,13 @@ class Vision:
     # ---------- status for the UI ----------
     def status(self):
         errs = self.err
+        ok, health = self.pose_health()
         return {"type": "vision", "enabled": self.K is not None, "problem": self.problem, "warn": self.warn,
                 "pose": self.rvec is not None, "locked": self.pose_locked, "seen": self.seen, "res": list(self.res),
+                "healthy": ok, "health": health, "diag": self.diag, "rejects": self.rejects,
+                "raw_err": None if self.raw_err is None else round(self.raw_err, 2),
+                "calib": {"res": list(self.calib_res) if self.calib_res else None, "rms": self.calib_rms},
+                "cam_pos": None if self.rvec is None else [round(float(v), 1) for v in camera_centre(self.rvec, self.tvec)],
                 "fps": round(self.fps, 1), "err": {str(k): round(v, 2) for k, v in errs.items()},
                 "markers": {str(k): v for k, v in self.markers.items()}, "touched": {str(k): v for k, v in self.touched.items()},
                 "measured": self.measured, "fit_info": self.fit_info, "plane": [round(c, 5) for c in self.plane],
