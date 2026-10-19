@@ -144,7 +144,7 @@ function shown(id){return $(id).style.display!='none';}
 // h.down(id,e) returns true to claim the press, h.move(id,e) true if it used the move, h.up(id).
 function track(el,h){
  if(window.PointerEvent){
-  el.addEventListener('pointerdown',function(e){if(h.down(e.pointerId,e)&&el.setPointerCapture)el.setPointerCapture(e.pointerId);});
+  el.addEventListener('pointerdown',function(e){if(h.down(e.pointerId,e)&&el.setPointerCapture)try{el.setPointerCapture(e.pointerId);}catch(x){}});
   el.addEventListener('pointermove',function(e){if(h.move)h.move(e.pointerId,e);});
   var pu=function(e){if(h.up)h.up(e.pointerId);};
   el.addEventListener('pointerup',pu);el.addEventListener('pointercancel',pu);el.addEventListener('lostpointercapture',pu);
@@ -167,11 +167,15 @@ var LEGACY=!window.WebSocket||/[?&]legacy=1/.test(location.search);
 var ws=null, usePoll=LEGACY, wsFails=0, listeners=[];
 var cid=Math.random().toString(36).slice(2)+Date.now().toString(36), outq=[], posting=false;
 function emit(m){for(var i=0;i<listeners.length;i++)listeners[i](m);}
-var DRAG={tip:1,joints:1};
+var DRAG={planar:1,joints:1};
 function sameKeys(a,b){for(var k in a)if(!(k in b))return false;for(k in b)if(!(k in a))return false;return true;}
 function send(o){
  // while a POST is in flight a newer drag position replaces the queued one instead of piling up behind it
- if(usePoll){var l=outq[outq.length-1];if(l&&DRAG[o.type]&&l.type==o.type&&sameKeys(l,o))outq[outq.length-1]=o;else outq.push(o);pump();}
+ if(usePoll){
+  // look back only across drag messages, so nothing ever jumps ahead of a command like stop
+  if(DRAG[o.type])for(var i=outq.length-1;i>=0&&DRAG[outq[i].type];i--)if(outq[i].type==o.type&&sameKeys(outq[i],o)){outq[i]=o;pump();return;}
+  outq.push(o);pump();
+ }
  else if(ws&&ws.readyState==1)ws.send(JSON.stringify(o));
 }
 function xhr(method,url,body,done){
@@ -213,9 +217,7 @@ listeners.push(function(m){
  if(m.type=='cfg'){cfg=m.cfg;drawKey=null;buildCal();setRanges();}
  else if(m.type=='tool'){}
 
- else if(m.type=='state'){st=m;stDirty=true;if(!dragSide && !dragTop && st.pts_tgt) {
-     var t4 = tipOf(st.pts_tgt); liveTip = { x: t4[0], y: t4[1], z: t4[2] };
-   }}
+ else if(m.type=='state'){st=m;stDirty=true;}
  else return;
  schedule();
 });
@@ -302,9 +304,10 @@ each(['pointerup','pointercancel','touchend','touchcancel','mouseup'],function(e
 
 
 // ---- throttled drag sending (25 Hz) ----
-var lastSend=0,pending=null,timer=null;
-function flush(){timer=null;if(pending){send(pending);pending=null;lastSend=now();}}
-function sendDrag(m){pending=m;var d=now()-lastSend;if(d>=40)flush();else if(!timer)timer=setTimeout(flush,40-d);}
+// one pending slot per view, so a side-view finger and a top-view finger never overwrite each other
+var lastSend=0,pending={},timer=null;
+function flush(){if(timer){clearTimeout(timer);timer=null;}var any=false;for(var k in pending){send(pending[k]);any=true;}pending={};if(any)lastSend=now();}
+function sendDrag(src,m){pending[src]=m;var d=now()-lastSend;if(d>=40)flush();else if(!timer)timer=setTimeout(flush,40-d);}
 
 // ---- drawing ----
 var side=$('side'),topv=$('top'),sc=side.getContext('2d'),tc=topv.getContext('2d');
@@ -327,7 +330,7 @@ function draw(){
  sc.clearRect(0,0,560,460);tc.clearRect(0,0,420,460);
  line(sc,[sp(-190,0),sp(450,0)],'#3a4048',2);sc.fillStyle='#8a919b';sc.fillText('SIDE: drag the blue tip, or the elbow / wrist dots, or the diamond (aims the gripper)',10,18);
  var o=sp(0,L.L0);sc.beginPath();sc.arc(o[0],o[1],R*SS,0,Math.PI*2);sc.strokeStyle='#2c3138';setDash(sc,[4,6]);sc.stroke();setDash(sc,[]);
- tc.fillStyle='#8a919b';tc.fillText('TOP: drag the blue tip (turns the base only)',10,18);
+ tc.fillStyle='#8a919b';tc.fillText('TOP: drag the blue dial handle (turns the base only)',10,18);
  tc.beginPath();tc.arc(TO.x,TO.y,(R+L.L3)*TS,0,Math.PI*2);tc.strokeStyle='#2c3138';setDash(tc,[4,6]);tc.stroke();setDash(tc,[]);
  if(!st)return;
  var SP=function(a){return a.map(function(q){return sp(q[0],q[1]);});},TP=function(a){return a.map(function(p){return tp(p[0],p[1]);});},col=st.live?'#38c172':'#8a919b';
@@ -335,28 +338,25 @@ function draw(){
  line(sc,SP(st.pl_cur),col,7);line(tc,TP(st.pts_cur),col,7);
  SP(st.pl_cur).forEach(function(p){dot(sc,p,5,'#14161a');});TP(st.pts_cur).forEach(function(p){dot(tc,p,5,'#14161a');});
  each(sideHandles(),function(h){if(h.n=='tip')dot(sc,h.px,h.rad,'rgba(78,161,255,.4)','#4ea1ff');else if(h.n=='dir')diamond(sc,h.px,h.rad,'rgba(240,160,48,.45)','#f0a030');else dot(sc,h.px,h.rad,'rgba(255,255,255,.15)','#e6e8eb');});
+ tc.beginPath();tc.arc(TO.x,TO.y,TR,0,Math.PI*2);tc.strokeStyle='#262b33';tc.lineWidth=2;tc.stroke();
  dot(tc,topHandle(),HR,'rgba(78,161,255,.4)','#4ea1ff');
 }
 // canvas pixel under a mouse event / Touch (page coordinates: old Android WebKit gets clientX wrong)
 function pos(cv,e){var b=cv.getBoundingClientRect(),x=e.pageX-(b.left+window.pageXOffset),y=e.pageY-(b.top+window.pageYOffset);return[x*cv.width/b.width,y*cv.height/b.height];}
 var D=180/Math.PI;
 function nrm(a){return ((a+180)%360+360)%360-180;}
-var dragSide = null, dragTop = null, liveTip = {x: 0, y: 0, z: 0};
+var dragSide = null, dragTop = null;
 
 function sideDrag(n,r,z){
  var L=cfg.links,A=st.ang,q=st.pl_tgt;
  if(n=='tip'){
-  // Side view dictates Radius and Height (Z); preserves the Base Yaw
-  var yaw = Math.atan2(liveTip.y, Math.max(0.001, liveTip.x));
-  var rr = Math.max(0, r);
-  liveTip.x = rr * Math.cos(yaw);
-  liveTip.y = rr * Math.sin(yaw);
-  liveTip.z = Math.max(5, z);
-  sendDrag({type:'tip', x:liveTip.x, y:liveTip.y, z:liveTip.z, lock:false});
+  // Side view sets reach and height only; the server leaves the base where it is, so the top
+  // view can turn it with a second finger at the same time
+  sendDrag('side',{type:'planar', r:Math.max(0, r), z:Math.max(5, z)});
  }
- else if(n=='elbow'){sendDrag({type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)});}
- else if(n=='wrist'){var e=q[2];sendDrag({type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)});}
- else if(n=='dir'){var w=q[3];sendDrag({type:'joints',gamma:nrm((90-A[1]-A[2])-Math.atan2(z-w[1],r-w[0])*D)});}
+ else if(n=='elbow'){sendDrag('side',{type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)});}
+ else if(n=='wrist'){var e=q[2];sendDrag('side',{type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)});}
+ else if(n=='dir'){var w=q[3];sendDrag('side',{type:'joints',gamma:nrm((90-A[1]-A[2])-Math.atan2(z-w[1],r-w[0])*D)});}
 }
 
 // Side Canvas Touch
@@ -380,12 +380,12 @@ track(side,{
 // added to the base angle it had at touch-down; shoulder, elbow and wrist are not sent, so the reach
 // and the height stay exactly as they are wherever the arm points.
 function bearing(p){return Math.atan2(TO.x-p[0],TO.y-p[1])*D;}
-// The handle sits on the base's bearing at the tip's distance, but is pulled in toward the base so it
-// never leaves the view: a tip outside the square would otherwise hide the handle and make it ungrabbable.
-var HR=16, HM=HR+6;
+// The handle is a dial: it sits on the base's bearing at a FIXED distance (TR) from the base, so it never
+// slides in or out with the reach. TR fits inside the view at +/-90 deg; the clamp below only matters
+// for a base turned further than that.
+var HR=16, HM=HR+6, TR=150;
 function topHandle(){
- var t=tipOf(st.pts_tgt),p=tp(t[0],t[1]),a=st.ang[0]/D,dx=-Math.sin(a),dy=-Math.cos(a);
- var d=Math.max(40,hyp(p[0]-TO.x,p[1]-TO.y));
+ var a=st.ang[0]/D,dx=-Math.sin(a),dy=-Math.cos(a),d=TR;
  if(dx>1e-6)d=Math.min(d,(topv.width-HM-TO.x)/dx);else if(dx<-1e-6)d=Math.min(d,(HM-TO.x)/dx);
  if(dy>1e-6)d=Math.min(d,(topv.height-HM-TO.y)/dy);else if(dy<-1e-6)d=Math.min(d,(HM-TO.y)/dy);
  return [TO.x+dx*d,TO.y+dy*d];
@@ -398,7 +398,7 @@ track(topv,{
  },
  move:function(id,e){
   if(!dragTop || dragTop.id !== id)return false;
-  sendDrag({type:'joints', yaw:dragTop.yaw0+nrm(bearing(pos(topv,e))-dragTop.b0)});return true;
+  sendDrag('top',{type:'joints', yaw:dragTop.yaw0+nrm(bearing(pos(topv,e))-dragTop.b0)});return true;
  },
  up:function(id){if(dragTop && dragTop.id === id){ dragTop = null; flush(); }}
 });

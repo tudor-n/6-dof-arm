@@ -473,6 +473,13 @@ async def handle(ws, m):
         move_tip(float(m["x"]), float(m["y"]), float(m["z"]), lock=bool(m.get("lock")),
                  pitch=m.get("pitch"), who="tip", verbose=bool(m.get("log")))
 
+    elif t == "planar":
+        # side-view tip drag: reach + height only. The base keeps its own angle, so a second finger
+        # can turn it (top view) at the same time without the two drags fighting.
+        base = S.tgt[0]; yaw = math.radians(joint_angles(S.tgt, S.cfg)[0]); r = max(0.0, float(m["r"]))
+        move_tip(r * math.cos(yaw), r * math.sin(yaw), float(m["z"]), lock=bool(m.get("lock")), who="tip", verbose=False)
+        S.tgt[0] = base
+
     elif t == "joints":
         # Only the named joints move; the others keep their exact servo value, so turning the base
         # (top-view drag sends yaw alone) cannot change reach or height. Inverse of joint_angles().
