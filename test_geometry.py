@@ -338,6 +338,21 @@ def test_joint_angles_still_reports_four_arm_joints():
 # from the arm itself.
 TAPE = {"0-1": 392.0, "0-2": 152.0, "0-3": 420.0, "1-2": 436.0, "1-3": 174.0, "2-3": 401.0}
 
+# The arm-measured model as it stood before the tape exposed it: a trapezoid where reality is
+# a rectangle. Kept as a fixture so these tests keep exercising the defect after vision.json
+# was corrected to the hand-measured values.
+FK_MARKERS = {0: [52.7, 170.8, 5.2], 1: [39.5, -180.9, 5.0],
+              2: [221.4, 254.9, 5.0], 3: [239.4, -240.4, 5.4]}
+
+
+def vision_with_fk_markers():
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    vis.markers = {k: list(v) for k, v in FK_MARKERS.items()}
+    vis.touched = {k: list(v) for k, v in FK_MARKERS.items()}
+    vis.tape = dict(TAPE)
+    vis._fit_plane()
+    return vis
+
 
 def test_shape_from_distances_round_trips_a_known_rectangle():
     truth = {0: np.array([0.0, 0.0]), 1: np.array([400.0, 0.0]),
@@ -375,13 +390,20 @@ def test_shape_from_distances_rejects_a_missing_pair():
 
 
 def test_tape_check_catches_the_fk_shape_distortion():
-    """The stored FK model really does disagree with the tape - this pins the magnitude."""
-    vis = V.Vision(".", 0, lambda *a, **k: None)
-    vis.tape = dict(TAPE)
+    """The arm-measured model really did disagree with the tape - this pins the magnitude."""
+    vis = vision_with_fk_markers()
     chk = vis.tape_check()
     assert chk is not None and len(chk["rows"]) == 6
     assert not chk["ok"], "expected the FK-derived model to fail the tape check"
     assert chk["worst"] > 50.0, f"worst disagreement only {chk['worst']} mm"
+
+
+def test_the_shipped_marker_model_passes_the_tape_check():
+    """vision.json now carries hand-measured positions; they must agree with the tape."""
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    chk = vis.tape_check()
+    assert chk is not None, "vision.json should ship tape measurements"
+    assert chk["ok"], f"the shipped marker model disagrees with the tape: {chk}"
 
 
 def test_tape_check_returns_none_without_tape():
@@ -392,9 +414,8 @@ def test_tape_check_returns_none_without_tape():
 
 def test_markers_from_tape_produces_a_shape_correct_model():
     """The whole point: the rebuilt model must match the tape, not the arm's distortion."""
-    vis = V.Vision(".", 0, lambda *a, **k: None)
-    vis.tape = dict(TAPE)
-    assert not vis.tape_check()["ok"], "precondition: the current model fails the tape"
+    vis = vision_with_fk_markers()
+    assert not vis.tape_check()["ok"], "precondition: the FK model fails the tape"
 
     out, info = vis.markers_from_tape(apply=False)
     assert out is not None, info
@@ -409,8 +430,7 @@ def test_markers_from_tape_produces_a_shape_correct_model():
 def test_markers_from_tape_keeps_the_layout_the_right_way_round():
     """A rigid fit cannot undo a mirror, so both reflections are tried. Markers 0 and 2 are
     on the robot's left (+Y) and 1 and 3 on its right; that must survive the rebuild."""
-    vis = V.Vision(".", 0, lambda *a, **k: None)
-    vis.tape = dict(TAPE)
+    vis = vision_with_fk_markers()
     out, _ = vis.markers_from_tape(apply=False)
     assert out[0][1] > 0 and out[2][1] > 0, f"0 and 2 should be +Y (robot left), got {out}"
     assert out[1][1] < 0 and out[3][1] < 0, f"1 and 3 should be -Y (robot right), got {out}"
@@ -419,8 +439,7 @@ def test_markers_from_tape_keeps_the_layout_the_right_way_round():
 
 
 def test_markers_from_tape_reports_the_fk_residual():
-    vis = V.Vision(".", 0, lambda *a, **k: None)
-    vis.tape = dict(TAPE)
+    vis = vision_with_fk_markers()
     _, info = vis.markers_from_tape(apply=False)
     assert "RMS residual" in info
     assert "forward kinematics is distorted" in info,         "a 38 mm RMS placement residual must be called out, not buried"
