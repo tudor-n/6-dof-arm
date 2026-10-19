@@ -835,6 +835,116 @@ def test_unrecorded_rms_is_not_treated_as_a_missing_file():
     assert vis.status()["calib"]["res"] == [1920, 1080]
 
 
+# --------------------------------------------------------- pose health and marker offsets
+
+# Real per-marker reprojection readings from Tudor's rig, 2026-10-19. Markers 0 and 2 sit
+# ~670 mm from the camera at 63 deg incidence; 1 and 3 are ~380 mm at 36 deg, so the same
+# millimetre of error on the table subtends far fewer pixels at 0 and 2.
+LIVE_SAMPLES = [
+    {0: 3.4, 1: 0.9, 2: 2.5, 3: 0.8}, {0: 2.7, 1: 1.1, 2: 2.8, 3: 1.6},
+    {0: 4.0, 1: 1.0, 2: 1.6, 3: 0.5}, {0: 3.0, 1: 0.8, 2: 2.8, 3: 0.9},
+    {0: 3.1, 1: 0.8, 2: 2.5, 3: 0.7}, {0: 2.8, 1: 0.9, 2: 3.0, 3: 0.2},
+    {0: 3.5, 1: 1.0, 2: 2.1, 3: 0.4}, {0: 3.9, 1: 1.2, 2: 1.6, 3: 0.9},
+    {0: 3.7, 1: 0.9, 2: 1.9, 3: 0.3},
+]
+
+
+def health_vision():
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    vis.rvec = np.zeros((3, 1))
+    vis.tvec = np.zeros((3, 1))
+    return vis
+
+
+def test_real_readings_do_not_flap_between_healthy_and_unhealthy():
+    """These samples made the old worst-marker rule change its mind six times in nine."""
+    vis = health_vision()
+    verdicts = []
+    for errs in LIVE_SAMPLES:
+        vis.err = errs
+        ok, _ = vis.pose_health()
+        vis._healthy = ok
+        verdicts.append(ok)
+    assert all(verdicts), f"a stable, usable pose was judged unhealthy: {verdicts}"
+    flips = sum(1 for a, b in zip(verdicts, verdicts[1:]) if a != b)
+    assert flips == 0, f"verdict changed {flips} times on a steady pose"
+
+
+def test_one_badly_wrong_marker_is_still_caught():
+    """Relaxing to the mean must not blind the check to a genuinely broken marker."""
+    vis = health_vision()
+    vis._healthy = True
+    vis.err = {0: 0.8, 1: 0.9, 2: 0.7, 3: 30.0}
+    ok, msg = vis.pose_health()
+    assert not ok
+    assert "3" in msg and "stored position" in msg
+
+
+def test_a_globally_bad_pose_is_still_caught():
+    vis = health_vision()
+    vis._healthy = True
+    vis.err = {0: 6.0, 1: 5.5, 2: 7.0, 3: 6.5}
+    ok, msg = vis.pose_health()
+    assert not ok and "mean reprojection" in msg
+
+
+def test_hysteresis_requires_a_better_reading_to_recover():
+    vis = health_vision()
+    marginal = {0: 3.4, 1: 2.6, 2: 2.8, 3: 2.6}      # mean 2.85, just under the 3.0 limit
+    vis.err = marginal
+    vis._healthy = True
+    assert vis.pose_health()[0], "should stay healthy at mean 2.85 when already healthy"
+    vis._healthy = False
+    assert not vis.pose_health()[0], "should NOT recover at mean 2.85 while unhealthy"
+    vis.err = {0: 2.0, 1: 2.0, 2: 2.0, 3: 2.0}       # mean 2.0, below 0.8 * 3.0
+    assert vis.pose_health()[0], "should recover once clearly better"
+
+
+def test_hysteresis_setup():
+    """Guard the fixture above: that sample must really straddle the two thresholds."""
+    marginal = [3.4, 2.6, 2.8, 2.6]
+    mean = sum(marginal) / 4
+    assert V.MAX_POSE_REPROJ_PX * V.HEALTH_RECOVER < mean <= V.MAX_POSE_REPROJ_PX
+
+
+def test_marker_offsets_are_zero_for_a_consistent_scene():
+    """A synthetic scene whose markers really are where the model says."""
+    vis, rvec, tvec, _ = synthetic_scene()
+    vis.rvec, vis.tvec = rvec, tvec
+    vis.s["object_z"] = 0.0
+    vis.s["x_trim"] = vis.s["y_trim"] = 0.0
+    ids = sorted(vis.markers)
+    obj = np.array([vis.markers[i] for i in ids], np.float32)
+    px = cv2.projectPoints(obj.reshape(-1, 1, 3), rvec, tvec, vis.K, vis.Z)[0].reshape(-1, 2)
+    vis.centers = {i: px[k] for k, i in enumerate(ids)}
+    for mid, off in vis.marker_offsets().items():
+        assert off["dist"] < 0.5, f"marker {mid} offset {off} on a consistent scene"
+
+
+def test_marker_offsets_report_a_displaced_marker_in_millimetres():
+    """Move one marker's recorded position and the offset must report that, in mm."""
+    vis, rvec, tvec, _ = synthetic_scene()
+    vis.rvec, vis.tvec = rvec, tvec
+    vis.s["object_z"] = 0.0
+    vis.s["x_trim"] = vis.s["y_trim"] = 0.0
+    ids = sorted(vis.markers)
+    obj = np.array([vis.markers[i] for i in ids], np.float32)
+    px = cv2.projectPoints(obj.reshape(-1, 1, 3), rvec, tvec, vis.K, vis.Z)[0].reshape(-1, 2)
+    vis.centers = {i: px[k] for k, i in enumerate(ids)}
+
+    vis.markers[0] = [vis.markers[0][0] + 4.0, vis.markers[0][1] - 3.0, vis.markers[0][2]]
+    off = vis.marker_offsets()[0]
+    assert abs(off["dx"] + 4.0) < 0.5, off      # camera says it is 4 mm back in x
+    assert abs(off["dy"] - 3.0) < 0.5, off
+    assert abs(off["dist"] - 5.0) < 0.5, off    # 3-4-5
+
+
+def test_marker_offsets_empty_without_a_pose():
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    vis.rvec = None
+    assert vis.marker_offsets() == {}
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():

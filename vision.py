@@ -33,7 +33,9 @@ DISP_W = 960
 MIN_CAM_HEIGHT_MM = 100.0    # a solve putting the camera lower than this above the table is
                              # the mirrored branch of the coplanar-PnP ambiguity - reject it
 MAX_SOLVE_REPROJ_PX = 4.0    # per-frame solves worse than this never enter the average
-MAX_POSE_REPROJ_PX = 3.0     # worst-marker error above this means the pose is not trustworthy
+MAX_POSE_REPROJ_PX = 3.0     # MEAN reprojection above this means the pose is not trustworthy
+MAX_POSE_WORST_PX = 8.0      # one marker this far out is broken, however good the mean is
+HEALTH_RECOVER = 0.8         # hysteresis: recover below this fraction of the limit
 
 
 def shape_from_distances(tape, ids):
@@ -151,7 +153,7 @@ class Vision:
         self.hist = deque(maxlen=15); self.rvec = self.tvec = None
         self.H = None              # pixel -> table homography, independent of K and the pose
         self.pose_locked = False
-        self.err, self.proj, self.seen = {}, {}, []
+        self.err, self.proj, self.seen, self.centers = {}, {}, [], {}
         # pose diagnostics: raw_err is the per-frame solve, avg_err the pose actually in use
         self.raw_err = self.avg_err = None
         self.rejects = 0; self.diag = ""; self._healthy = None
@@ -371,18 +373,63 @@ class Vision:
         return rv, tv, float(np.mean(np.linalg.norm(pr - px, axis=1)))
 
     def pose_health(self):
-        """(ok, message) - drives the UI badge and gates picking."""
+        """(ok, message) - drives the UI badge and gates picking.
+
+        Judged on the MEAN reprojection, not the worst marker. With only four markers, one
+        sitting 2-3 mm off - which is inside hand-measurement precision, and worse for the
+        markers furthest from the camera because a fixed error on the table subtends more
+        pixels there - would otherwise condemn a pose that is demonstrably stable, and the
+        verdict would flap sample to sample while picks were randomly refused.
+
+        A separate and much looser worst-marker limit still catches one genuinely broken
+        marker, and hysteresis stops the verdict oscillating at the boundary.
+        """
         if self.K is None:
             return False, self.problem or "no camera calibration"
         if self.rvec is None:
             return False, "no camera pose yet (all 4 markers must be visible at once)"
         if not self.err:
             return False, "no markers visible - pose is stale"
-        worst = max(self.err.values())
-        if worst > MAX_POSE_REPROJ_PX:
-            return False, (f"camera pose unreliable: worst marker reprojects {worst:.1f}px "
-                           f"(limit {MAX_POSE_REPROJ_PX:.0f}px)")
-        return True, f"pose ok (worst marker {worst:.1f}px)"
+        errs = list(self.err.values())
+        mean, worst = float(np.mean(errs)), float(max(errs))
+        # The outlier test comes first deliberately: a single wildly wrong marker also drags
+        # the mean over its limit, and "marker 3 is wrong" is far more actionable than
+        # "the mean is high".
+        if worst > MAX_POSE_WORST_PX:
+            bad = max(self.err, key=lambda k: self.err[k])
+            return False, (f"marker {bad} reprojects {worst:.1f}px, far outside the rest - its "
+                           f"stored position is probably wrong or it is mis-detected")
+        # once unhealthy, require a clearly better reading before going healthy again
+        lim = MAX_POSE_REPROJ_PX if self._healthy else MAX_POSE_REPROJ_PX * HEALTH_RECOVER
+        if mean > lim:
+            return False, (f"camera pose unreliable: mean reprojection {mean:.1f}px "
+                           f"(limit {lim:.1f}px)")
+        return True, f"pose ok (mean {mean:.1f}px, worst {worst:.1f}px)"
+
+    def marker_offsets(self):
+        """Each marker's residual as an offset on the table, in mm.
+
+        Reprojection error is in pixels, which tangles how wrong a marker's recorded position
+        is with how far it sits from the camera - the same millimetre of error subtends far
+        more pixels up close. Raycasting each detected centre back onto the table and
+        comparing against the stored coordinates gives the discrepancy in the units the
+        markers were actually measured in, which is the form you can act on.
+        """
+        if self.rvec is None or not self.centers:
+            return {}
+        out = {}
+        for i, uv in self.centers.items():
+            if i not in self.markers:
+                continue
+            p = self.markers[i]
+            hit = self.pixel_to_table(uv[0], uv[1], raw=True,
+                                      z_off=p[2] - self.table_z(p[0], p[1]))
+            if not hit:
+                continue
+            dx, dy = hit[0] - p[0], hit[1] - p[1]
+            out[i] = {"dx": round(dx, 2), "dy": round(dy, 2),
+                      "dist": round(math.hypot(dx, dy), 2)}
+        return out
 
     # ---------- a second, independent pixel -> table mapping ----------
     def _update_homography(self, centers):
@@ -549,6 +596,7 @@ class Vision:
         if ids is not None:
             centers = {int(i): c[0].mean(axis=0) for i, c in zip(ids.flatten(), corners)}
         self.seen = sorted(centers)
+        self.centers = centers
         need = sorted(self.markers)
         if all(i in centers for i in need) and not self.pose_locked:
             got = self.solve_pose([self.markers[i] for i in need], [centers[i] for i in need])
@@ -577,9 +625,12 @@ class Vision:
                     self.proj[i] = pr[k]; self.err[i] = float(np.linalg.norm(pr[k] - centers[i]))
                 self.avg_err = float(np.mean(list(self.err.values())))
                 cam = camera_centre(self.rvec, self.tvec)
+                off = self.marker_offsets()
                 self.diag = (f"raw {self.raw_err:.2f}px | in-use {self.avg_err:.2f}px | per-marker "
                              + " ".join(f"{i}:{self.err[i]:.1f}" for i in sorted(self.err))
-                             + f" | camera at X{cam[0]:.0f} Y{cam[1]:.0f} Z{cam[2]:.0f}")
+                             + f" | camera at X{cam[0]:.0f} Y{cam[1]:.0f} Z{cam[2]:.0f}"
+                             + (" | off-by-mm " + " ".join(f"{i}:{off[i]['dist']:.1f}"
+                                                           for i in sorted(off)) if off else ""))
                 self._health_transition()
         return corners, ids
 
@@ -764,7 +815,7 @@ class Vision:
                 "markers": {str(k): v for k, v in self.markers.items()}, "touched": {str(k): v for k, v in self.touched.items()},
                 "measured": self.measured, "fit_info": self.fit_info, "plane": [round(c, 5) for c in self.plane],
                 "tape": self.tape, "tape_check": self.tape_check(), "aruco_mm": self.aruco_mm,
-                "intrinsics_check": self.intrinsics_check(),
+                "intrinsics_check": self.intrinsics_check(), "offsets": self.marker_offsets(),
                 "settings": self.s, "roll": self.roll, "detect": self.detect_on, "prompts": self.prompts,
                 "dets": [{"name": d["name"], "conf": round(d["conf"], 2), "x": round(d["x"], 1), "y": round(d["y"], 1),
                           "closing": None if d["closing"] is None else round(d["closing"], 1)} for d in self.dets[:5]],
