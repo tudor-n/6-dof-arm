@@ -49,6 +49,14 @@ DEFAULT_CFG = {
 }
 DEFAULT_TOOL = DEFAULT_CFG["tool"]
 
+# Hard stop on commanded tip height. z = 0 is the base plane, and the table surface sits a
+# few mm ABOVE it (table_z is about 5.15 here), so grasping an object lying on the table
+# needs a tip target slightly below zero. A clamp at 0 therefore makes grasping impossible
+# while looking like it is working - it silently defeats both z_grasp_offset and z_floor.
+# This is a backstop against absurd commands only; the real limits are z_floor for picks
+# and the joint limits for everything.
+Z_MIN_MM = -40.0
+
 def load_cfg():
     cfg = copy.deepcopy(DEFAULT_CFG)
     if CFG_PATH.exists():
@@ -259,7 +267,7 @@ def move_tip(x, y, z, lock=False, pitch=None, who="tip", strict=False, verbose=T
     """Solve a tip target and write it to S.tgt. Returns True when the arm will really be where you asked.
     strict=True: refuse (and do not move) when IK had to change the target or hit a joint limit."""
     zr = z
-    x, z = max(0.0, x), max(0.0, z)          # same clamps as before
+    x, z = max(0.0, x), max(Z_MIN_MM, z)
     p0 = fk(S.tgt, S.cfg)[1] if pitch is None else pitch
     roll = S.tgt[4]          # the tool offset rotates with wrist roll, so IK needs it
     servo, reach, lim = ik(x, y, z, p0, S.cfg, roll) if lock else ik_auto(x, y, z, p0, S.cfg, roll)
@@ -273,7 +281,7 @@ def move_tip(x, y, z, lock=False, pitch=None, who="tip", strict=False, verbose=T
         S.reach, S.limited = reach, lim
     if verbose:
         m = f"{who}: want ({x:.1f}, {y:.1f}, {z:.1f}) -> IK gives ({gx:.1f}, {gy:.1f}, {gz:.1f}), tool pitch {gp:.0f}"
-        if zr < 0: m += f" | z {zr:.1f} was below 0 and was raised to 0"
+        if zr < Z_MIN_MM: m += f" | z {zr:.1f} was below the {Z_MIN_MM:.0f} mm hard stop and was raised"
         if reach: m += " | TARGET CHANGED to reach it (moved toward the base / pitch changed)"
         if lim: m += " | JOINT LIMIT hit"
         if err > 2.0 and not reach and not lim: m += f" | miss {err:.1f} mm"

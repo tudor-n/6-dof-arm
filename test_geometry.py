@@ -1084,6 +1084,39 @@ def test_unknown_marker_is_reported():
     assert P is None and "marker 9" in why
 
 
+# ----------------------------------------------- commanding the tip below the base plane
+
+def test_a_negative_tip_target_is_not_clamped_to_zero():
+    """z = 0 is the base plane and the TABLE sits above it, so grasping needs a target
+    slightly below zero. A clamp at 0 silently defeats both z_grasp_offset and z_floor and
+    makes picking an object off the table impossible while appearing to work."""
+    assert S.Z_MIN_MM < -5.0, "the hard stop must leave room to reach the table surface"
+    cfg = S.load_cfg()
+    for z in (-2.5, -5.0):
+        servo, reach, lim = S.ik(220.0, 0.0, z, -60.0, cfg, 90.0)
+        if reach or lim:
+            continue
+        got = S.fk(list(servo) + [90.0, 90.0], cfg)[0][-1]
+        assert got[2] < -1.0, f"asked for z={z}, kinematics returned {got[2]:.2f}"
+
+
+def test_the_hard_stop_still_catches_an_absurd_target():
+    assert S.Z_MIN_MM > -200.0, "the backstop should still be a backstop"
+
+
+def test_grasp_depth_survives_the_whole_pick_chain():
+    """pick_seq applies z_floor, then move_tip applies its own stop. Both have silently
+    pinned the grasp to 0.00 before, so check the pair together rather than separately."""
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    tz = vis.table_z(200.0, 0.0)
+    want = tz + vis.s["z_grasp_offset"]
+    after_floor = max(vis.s["z_floor"], want)
+    after_move = max(S.Z_MIN_MM, after_floor)
+    assert after_move < 0.0, f"grasp should end up below the base plane, got {after_move:.2f}"
+    assert abs(after_move - want) < 1e-9, (
+        f"something clamped the intended grasp: wanted {want:.2f}, got {after_move:.2f}")
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():
