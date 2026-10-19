@@ -21,6 +21,57 @@ anything moves.
 
 ---
 
+## Where this rig currently stands  (measured 2026-10-19)
+
+Everything below is measured, not assumed. Provenance matters here, because for most of this
+project's life every length was derived from the arm itself - which made an error in the arm
+invisible by construction.
+
+### Marker positions, in the robot frame
+
+Measured by hand against a drawn centre line, with a 33.2 mm datum correction from the frame lip
+to the rotation axis. These involve the arm nowhere.
+
+| marker | X (mm) | Y (mm) | true azimuth | distance from base axis |
+|---|---|---|---|---|
+| ID0 | 134.2 | +189.0 | +54.62 deg | 231.8 mm |
+| ID1 | 109.2 | -200.0 | -61.37 deg | 227.9 mm |
+| ID2 | 285.2 | +201.0 | +35.17 deg | 348.9 mm |
+| ID3 | 290.2 | -201.0 | -34.71 deg | 353.0 mm |
+
+Cross-checked against six independently tape-measured pairwise distances: agree to 7 mm worst,
+2 mm on five of six. ArUco black-square edge 23 mm. `tape_check()` guards this at startup.
+
+### Joint calibration
+
+| joint | zero | gain | how |
+|---|---|---|---|
+| base | 97.56 | 0.7635 | Aimed at each marker, fitted against known azimuths. r2 0.998 |
+| shoulder | 66.74 | 0.7109 | Fitted from 8 marker touches |
+| elbow | 81.98 | 0.7577 | Fitted from 8 marker touches |
+| wrist pitch | 236.72 | 0.6307 | Fitted from 8 marker touches |
+
+`tool.along` 26.4 mm; `tool.perp` and `tool.lateral` are **unmeasured** and assumed zero.
+
+Accuracy, by leave-one-out cross-validation on the real touches - fit on seven, predict the
+eighth: **median 11.3 mm, worst 17.3 mm**, against 29.2 / 52.0 mm for the uncalibrated model.
+Valid at table height over 228-353 mm of reach; outside that it is extrapolation.
+
+Two caveats worth carrying. The wrist zero of 236.72 lies outside that joint's 49.5-180 travel,
+so it is not a physical zero - the parameters are partly degenerate even though the predictions
+are not. And the gains clustering at 0.71-0.76 across three joints measured two different ways
+is consistent with the firmware pulse window being about 85% of what the servos want.
+
+### Other measured constants
+
+| | |
+|---|---|
+| Base plate tilt | 4.39 deg forward-down (35 mm over 457 mm) |
+| Camera intrinsics | 1920x1080, fx/fy 1368, RMS never recorded - see step 1 |
+| Table plane | z = 0.00077x - 0.00029y + 4.99, i.e. near-flat, as expected |
+
+---
+
 ## 0. Tape-measure the markers
 
 Measure all six distances between marker centres by hand and put them in `vision.json`

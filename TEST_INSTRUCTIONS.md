@@ -34,77 +34,43 @@ changes break the UI" from anything camera-related.
 
 ---
 
-## 1. Measure the base servo gain  **(start here)**
+## 1. What is already calibrated  **(read this first)**
 
-Superseded step: this used to say "rebuild from tape". **Do not press "Rebuild from tape"
-any more.** Your Cartesian measurements are already installed in `vision.json` and are
-strictly better - the tape only fixed the markers' shape, leaving placement to the arm,
-whereas the Cartesian numbers fix both and involve the arm nowhere. Rebuilding would throw
-that away and reintroduce the placement error. The button stays for the case where you have
-tape distances but no Cartesian measurements.
+Earlier versions of this file told you to measure the base gain and then the pitch joints.
+Both are done. All four joints now carry a measured zero and gain:
 
-### What is wrong
+| joint | zero | gain |
+|---|---|---|
+| base | 97.56 | 0.7635 |
+| shoulder | 66.74 | 0.7109 |
+| elbow | 81.98 | 0.7577 |
+| wrist pitch | 236.72 | 0.6307 |
 
-Forward kinematics over-reports base yaw by about a third, because the base servo physically
-turns roughly 0.75 degrees per degree commanded. All six servos share the same pulse mapping,
-so all of them under-rotate; the arm ends up less folded than commanded, which is why reach
-is underestimated by 23% at the near markers and only 4% at the far ones, and why the real
-marker rectangle came out as a trapezoid.
+Tip accuracy, by leave-one-out cross-validation on the real marker touches: **median 11.3 mm,
+worst 17.3 mm**, against 29.2 / 52.0 mm uncalibrated. Valid at table height over 228-353 mm of
+reach - the 135 mm hover is extrapolation.
 
-### Measuring it without a protractor
+The marker model is hand-measured in Cartesian coordinates and involves the arm nowhere.
+`tool.along` is fitted at 26.4 mm; `tool.perp` and `tool.lateral` are still zero and unmeasured.
 
-You already know where the markers truly are, which makes them a calibration target. Their
-true azimuths from the base, computed from your own measurements:
+Full detail, including which hypotheses were ruled out and why, is in `docs/ROADMAP.md`.
+Measured values and their provenance are in `docs/CALIBRATION.md`.
 
-| marker | true azimuth |
-|---|---|
-| ID0 | +54.62 deg |
-| ID1 | -61.37 deg |
-| ID2 | +35.17 deg |
-| ID3 | -34.71 deg |
+### What to do next
 
-For each marker: turn Live on, jog the tip onto the marker centre, and **read the base servo
-value** (joint 0). Then
+In order of value:
 
-```
-gain = true_azimuth / (base_servo - 90)
-```
+1. **Finish tuning grasp depth.** `z_grasp_offset` in `vision.json` is at -7.6, giving a grasp
+   about 2.45 mm below the table plane. It is genuinely in control for the first time - two
+   separate clamps used to pin it at zero - so change it a couple of mm at a time and it will do
+   what you expect.
+2. **Re-touch the markers properly** to improve the pitch fit from ~11 mm toward ~6 mm. Two
+   touches per marker at wrist pitches **25-30 degrees apart**, with the **roll kept constant**,
+   and ideally a third with the tip resting on a box of known height. Format them as
+   `marker_poses` in `servo_cal.json` and run `fit_servo_calibration.py`.
+3. **Measure the off-axis tool offsets** if picks drift to one side in a way that changes with
+   wrist roll. The planar fit is blind to these by construction.
 
-using 90 as the base zero from `config.json`. Four markers gives four independent estimates;
-they should cluster. Expect something near 0.75. Put the average into `config.json`:
-
-```json
-{"name": "base", "gain": 0.75, "zero": 90.0, "sign": 1, "min": 5, "max": 175}
-```
-
-Sanity check as you go: if `base_servo - 90` comes out around +73 at ID0 where the true
-azimuth is +54.6, that is the 1.33 over-reporting, and gain = 54.6/73 = 0.75.
-
-### The other joints
-
-If the pulse mapping is the cause then every joint shares the same gain, so start by putting
-the same number on shoulder, elbow and wrist pitch, and check whether reach stops being
-underestimated. The marker distances from the base are the reference:
-
-| marker | true distance from base axis |
-|---|---|
-| ID0 | 231.8 mm |
-| ID1 | 227.9 mm |
-| ID2 | 348.9 mm |
-| ID3 | 353.0 mm |
-
-Touch each marker and compare the reported tool point against these. Reach should come out
-right at both near and far markers; if it is right at one and wrong at the other, the gains
-differ per joint and need measuring individually.
-
-### Why compensate in software rather than fix the firmware
-
-The tidier-looking fix is to widen `SERVOMIN`/`SERVOMAX` in `src/main.c` so a commanded
-degree really is a degree. **Do not start there.** Those constants currently clamp how far
-the servos can be driven, and every joint `min`/`max` in `config.json` is expressed in the
-same servo units - widening the range risks driving joints into their mechanical stops and
-invalidates all six limits at once. Per-joint `gain` is reversible, costs nothing, and keeps
-the limits valid. Revisit the firmware as a cleanup once the arm is accurate.
 
 ## 2. Camera, no arm
 
@@ -159,30 +125,37 @@ The arm boots limp. Nothing moves until **Live** is on. **STOP** or **Esc** canc
 and brakes the gripper - know where it is before you turn Live on.
 
 1. Live on, jog around the workspace, watch the cyan tip cross against the real gripper.
-   **Expect it to still be off** - see Gotcha 4. Note *how* it is off: a constant offset
-   means the tool offset needs measuring, while drift with reach means link lengths.
-2. **Roll the wrist and watch the cross.** It will not move, because the tool offsets are
-   still zero. Measure how far the *real* fingertip moves - that distance is twice your
-   off-axis tool offset, and it is the number you need for step 4.
-3. Click a point, **Go to hover**. The arm should arrive above where you clicked.
-4. Only then try a pick, starting near the centre of the workspace where error was
-   smallest.
+   It should track reasonably well at table height. Note *how* any error behaves: a constant
+   offset points at the tool model, drift with reach points at the joint gains, and sideways
+   error that changes with wrist roll points at the unmeasured off-axis tool offsets.
+2. **Roll the wrist and watch the cross.** It will not move, because `tool.perp` and
+   `tool.lateral` are still zero. Measure how far the *real* fingertip moves - half that
+   distance is your off-axis offset, and it is the number step 4 needs.
+3. Click a point, **Go to hover**. The arm should arrive above where you clicked. Height is
+   the weakest axis, since every calibration touch was taken on the table.
+4. Then try a pick, starting near the centre of the workspace.
 
 ---
 
-## 4. Measure the tool (the remaining known gap)
+## 4. The remaining measurements
 
-This branch makes the tool offset *expressible*; it does not know yours. Until you measure
-it, the tip overlay stays wrong and `z_grasp_offset = -34` keeps absorbing it.
+**Off-axis tool offsets.** `tool.perp` and `tool.lateral` are zero and unmeasured, and the
+planar fit cannot see them - it uses only radius and height, both in the arm's plane. Procedure
+in `docs/CALIBRATION.md` step 3: pitch -90, roll zero, jog the fingertip onto a mark, compare
+with the reported tool point, then roll 180 degrees and repeat to separate the off-axis part.
 
-Procedure is in `docs/CALIBRATION.md` step 3. Short version: pitch -90, roll zero, jog the
-fingertip onto a mark, compare with the reported tool point; then roll 180° and repeat to
-separate the off-axis part. Put the numbers in `config.json` under `tool`.
+**A better pitch fit.** The current one cross-validates at ~11 mm from eight touches taken at
+table height. Two touches per marker at wrist pitches **25-30 degrees apart**, roll held
+**constant**, plus a third with the tip on a box of known height, should get it near 6 mm. Put
+them in `servo_cal.json` as `marker_poses` and run `fit_servo_calibration.py` - it will refuse
+the fit and tell you why if the poses are too alike.
 
-Then re-record all four markers **at one fixed wrist pitch and roll**, press Apply, and
-expect `z_grasp_offset` to fall toward zero.
+**Note** `tool.along` is already fitted at 26.4 mm, lumped out of the effective link length. A
+touch cannot separate "the forearm is longer" from "the tool sticks out further", so if you
+measure the tool physically, expect to adjust both.
 
 ---
+
 
 ## Gotchas
 
@@ -222,24 +195,38 @@ resolution than you had before, which invalidates your current intrinsics.**
 Check the log line `Camera running at WxH` on startup. If it is not what you used to get,
 re-run `calibrate_camera.py` at the new resolution.
 
-### 4. The tip overlay is NOT fixed yet
+### 4. The tip overlay is better but not perfect
 
-Tool offsets default to zero, which reproduces the old centreline tip exactly. This was
-deliberate so the branch changes nothing until you choose to. The overlay will keep not
-tracking the real gripper until you do step 4. Do not read that as the branch having failed.
+The cross is the **tool point**, and `tool.along` is now fitted, so it should sit near the grasp
+point rather than at the base of the gripper. Expect roughly 11 mm of error at table height and
+more above it, since every calibration touch was taken on the table.
 
-### 5. Leave the trims alone
+`tool.perp` and `tool.lateral` are still zero. If the cross is consistently off to one side, and
+that side changes when you roll the wrist, those are the cause - and the planar fit cannot see
+them.
 
-`x_trim`, `y_trim` and `z_grasp_offset` are currently absorbing real errors. Resist
-zeroing them "to see" before the tool is measured, and resist tuning them to chase
-whatever error remains after this branch. They are for a few mm of residual. Using them for
-centimetres is what made the last failure so hard to unpick.
 
-### 6. You will see a warning about `camera_calib.json` on first run
+### 5. The trims are now fair game, within reason
 
-Expected. That file does not exist yet - it is written by the new `calibrate_camera.py`.
-Until then `vision.py` cannot verify that the stream resolution matches your intrinsics and
-says so. Harmless, and it goes away when you recalibrate.
+`z_grasp_offset` went from -34 to -7.6 once the tool length was modelled, which is it returning
+to its intended job of trimming a few millimetres. Adjusting it by a millimetre or two is now the
+right move rather than a workaround.
+
+`x_trim` and `y_trim` are still zero and should stay that way. If picks are systematically off in
+X or Y, that is a model error with a cause worth finding, not a few mm of residual.
+
+
+### 6. `camera_calib.json` exists now, and records a RECONSTRUCTED resolution
+
+It holds the provenance of the existing intrinsics, not the intrinsics themselves - those are
+still `camera_matrix.npy` and `dist_coeffs.npy`. The 1920x1080 in it was inferred rather than
+recorded: the principal point only sits near centre for that mode, and detections logged in
+`debug-8a3ee4.log` reach x=1631, which rules out anything smaller.
+
+`rms` is null because the old calibration script discarded it. That is not worth worrying about -
+watch the `intrinsics_check` figure instead, which measures the same thing better. Under 2 mm
+means the intrinsics are fine for this workspace.
+
 
 ### 7. `fk()` now returns six points, not five
 
@@ -265,15 +252,14 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.Co
 
 ---
 
-## What to report back
+## If something looks wrong
 
-With these I can tell you immediately whether the diagnosis was right and what is next:
+Worth capturing before changing anything:
 
-1. The four base-gain estimates from step 1, and the base servo value you read at each marker.
-2. The status line from step 2, verbatim - both reprojection figures and the camera position.
-3. Whether the grid is still mirrored.
-4. Click accuracy at each of the four markers (clicked vs. stored coordinates).
-5. Any `rejected` lines from the log, verbatim.
-6. The logged `Camera running at WxH`.
-7. The `intrinsics_check` figure from the status feed - it says whether your existing
-   `camera_matrix.npy` needs re-shooting at all (under 2 mm: leave it alone).
+1. The status line verbatim - both reprojection figures, the camera position, and the
+   `off-by-mm` per-marker offsets.
+2. Whether the overlay grid lies on the real table and is not mirrored.
+3. Click accuracy at each marker: clicked coordinates against the stored ones.
+4. Any `rejected`, `UNHEALTHY` or clamp lines from the log.
+5. For a pick that misses: where the cross sat, where the gripper actually went, and whether the
+   miss was in reach, height or sideways. Those three point at different joints.

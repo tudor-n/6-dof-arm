@@ -1,281 +1,189 @@
 # Roadmap
 
+## Current state
+
+**Working, and closer to good than it has been - but not finished.**
+
+The arm picks objects off the table reasonably reliably. Vision is trustworthy; the arm model
+is calibrated but imperfect, and grasp depth is still being tuned.
+
+| | |
+|---|---|
+| Camera pose | Solid. Mean reprojection ~1.8 px, camera position rock-steady |
+| Marker model | Hand-measured, agrees with an independent tape check to 7 mm worst |
+| Arm kinematics | All four joints calibrated. **~11 mm** tip accuracy at table height (cross-validated) |
+| Grasp depth | Being tuned. Two clamps that silently pinned it at zero are now removed |
+| Tool model | Along-axis length fitted. Off-axis offsets unmeasured and assumed zero |
+
+In practice: the arm reaches the right place well enough to pick pens and pliers, and the
+remaining errors are millimetres rather than centimetres. Getting from "works most of the time"
+to "works every time" needs the open items below.
+
 ## Where this came from
 
-The arm picked pens and pliers reliably while its base was weighted down with dumbbells.
-Knocking the table destroyed that, and the base was bolted down properly. Re-measuring
-everything afterwards did not restore accuracy: the gripper landed centimetres off in a
-pattern that varied across the table, and the overlay grid came out roughly mirrored
-against the real table.
+The arm picked reliably while its base was weighted down with dumbbells. Knocking the table
+destroyed that, and the base was bolted down properly. Re-measuring afterwards did not restore
+accuracy: the gripper landed centimetres off in a pattern that varied across the table, and the
+overlay grid came out roughly mirrored.
 
-The cause was software, introduced when vision moved from a separate WebSocket-client
-process into `vision.py` inside the server.
+Two unrelated faults were compounding - one in the camera path, one in the arm model - and each
+partly masked the other.
 
 ## Fixed
 
 ### Rotation averaging (the mirrored overlay)
 
-Camera poses were averaged over 15 frames by taking the componentwise mean of their
-Rodrigues vectors. That is not a valid operation. `R(a, t) == R(-a, 2pi - t)`, so every
-rotation has two vector representations, and near `|rvec| = pi` the axis sign flips
-between frames. A camera looking down at a +Z-up table frame sits exactly there, so the
-mean drifted toward identity and the projected world came out mirrored. The previous
-working agent did not average at all, which is why it never showed this.
+Camera poses were averaged by taking the componentwise mean of their Rodrigues vectors. That is
+not a valid operation: `R(a, t) == R(-a, 2pi - t)`, so every rotation has two vector forms, and
+near `|rvec| = pi` the axis sign flips between frames. A camera looking down at a +Z-up table
+sits exactly there, so the mean drifted toward identity and the world came out mirrored.
 
-Replaced with `avg_rotation()`: average the rotation matrices, project back onto SO(3) by
-SVD. `test_geometry.py` pins it - the naive mean is off by more than 45 degrees on inputs
-where the SO(3) mean stays within 1.
+Replaced with `avg_rotation()`: average the rotation matrices, project back onto SO(3) by SVD.
+Tests pin it - the naive mean is off by more than 45 degrees where the SO(3) mean stays within 1.
 
 ### Pose solver and gates
 
-`SOLVEPNP_ITERATIVE` on four near-coplanar points is the textbook case for converging to
-the wrong local minimum. Switched to `SOLVEPNP_SQPNP` (globally optimal) plus LM
-refinement. Solves are now rejected rather than silently used when they put the camera
-below the table or exceed a raw reprojection threshold, and rejections are reported.
+`SOLVEPNP_ITERATIVE` on four near-coplanar points is the textbook case for the wrong local
+minimum. Switched to `SOLVEPNP_SQPNP` plus LM refinement. Solves are now rejected rather than
+silently used when they put the camera below the table or exceed a raw reprojection threshold.
 
-Both reprojection figures are now tracked and displayed: the raw per-frame solve and the
-error of the averaged pose actually in use. Previously only the latter was shown, so a
-corrupted average was indistinguishable from a bad solve - which is what made this hard
-to diagnose.
+Both reprojection figures are tracked and shown: the raw per-frame solve and the error of the
+averaged pose in use. Previously only the latter existed, so a corrupted average was
+indistinguishable from a bad solve - which is what made this hard to find.
 
-### Tool centre point
+### Pose health
 
-`joint_angles()` iterated `range(4)`, so **wrist roll never entered forward kinematics**,
-and the tip was modelled as a point on the L3 centreline. A real grasp point sits off the
-roll axis, so the true fingertip swings in a circle as the wrist rolls, invisibly. That is
-why the tip overlay never tracked the real gripper and why `z_grasp_offset` had drifted to
--34 mm absorbing an unmodelled tool.
+Health was judged on the **worst** marker against 3 px. With four markers that is hostage to one
+of them, and geometry guarantees one always will be: markers 0 and 2 sit ~670 mm from the camera
+at 63 degrees incidence while 1 and 3 are ~380 mm at 36 degrees, so the same error on the table
+subtends about twice the pixels at 0 and 2. The verdict flipped between healthy and unhealthy on
+alternate frames, and picks were refused at random.
 
-`config.json` now carries `tool` offsets that rotate with roll; `fk`/`ik` use them. All
-default to zero, reproducing the old behaviour exactly.
+Now judged on the **mean**, with a separate looser worst-marker limit to catch one genuinely
+broken marker, and hysteresis so the verdict cannot oscillate. Replaying nine real samples: the
+old rule changed its mind six times, the new rule none.
 
-### Measurement hygiene
+### The marker model was the wrong shape
 
-Marker recordings now store the wrist pitch and roll they were taken at, and the UI warns
-when they vary across markers. Touching four markers at four different wrist pitches gives
-four differently-wrong Z values and a table plane fitted through nonsense - the likely
-reason the fitted plane came out flat.
+Hand-measured distances between marker centres showed the arm-measured model was not merely
+misplaced but geometrically wrong: the real layout is a near-rectangle (near edge 392 mm, far
+edge 401, ratio 1.02) while the model described a strong trapezoid (352 and 496, ratio 1.41).
 
-`calibrate_camera.py` now reports the RMS reprojection error it had been discarding, warns
-when the board is too small for the working distance, and records the calibration
-resolution in `camera_calib.json` so `vision.py` can hard-check the live stream against it.
-Both ends lock MJPG.
+This matters more than it looks. A rectangle viewed obliquely *projects* to a trapezoid, so a
+trapezoidal model of a rectangular reality gets partly absorbed by solvePnP as **camera tilt** -
+giving a modest reprojection error while every table coordinate is wrong by centimetres, and
+worsening across the workspace.
 
-### Corrected along the way
+Replaced with Cartesian hand measurements (see CALIBRATION.md), which agree with the independent
+tape distances to 7 mm worst and 2 mm on five of six pairs. The marker model no longer depends on
+the arm at all.
 
-**Settled: the table plane was never the problem.** The post-bolting constants actually in
-use were `PLANE_A/B/C = 0.0086 / 0.0045 / 6.95`, which is near-flat and sits within 0.7 mm of
-the least-squares plane through the marker Z values - i.e. exactly what `_fit_plane()` now
-computes. The plane has agreed with the markers all along.
+### Servo gain and the tool centre point
 
-The `0.1197 / 0.0573 / -14.35` set committed at HEAD is from *before* the base was bolted
-down, and described a ~5 cm tilt across the workspace. Restoring it looked like an obvious
-fix. It is not.
+`joint_angles()` iterated `range(4)`, so wrist roll never entered forward kinematics, and the tip
+was modelled as a point on the L3 centreline. `config.json` now carries tool offsets that rotate
+with roll, and a per-joint `gain` - degrees actually rotated per degree commanded, which is not
+1.0 on this rig. See CALIBRATION.md for the measured values and HARDWARE.md for why.
 
-That plane does not pass through the marker coordinates it shipped alongside:
+### Two clamps that pinned the grasp at zero
 
-| marker | stored Z | old plane | disagreement |
-|---|---|---|---|
-| ID0 | 7.4 | 0.6 | 6.8 mm |
-| ID1 | 7.2 | -18.5 | **25.7 mm** |
-| ID2 | 10.4 | 25.5 | **-15.1 mm** |
-| ID3 | 7.5 | 1.4 | 6.1 mm |
+Grasp depth would not respond to `z_grasp_offset`. It was clamped by `z_floor` at 0.0, and then
+independently by `z = max(0.0, z)` inside `move_tip`. Since `z = 0` is the base plane and the
+table surface sits a few mm **above** it, a clamp at zero makes grasping impossible while
+appearing to work, and silently defeats both settings. Both are fixed; `Z_MIN_MM` is now a
+backstop at -40 rather than a working limit.
 
-The markers are physically on the table. A faithful measurement of that surface would pass
-through them within a millimetre or two; this one misses by up to 26 mm. So it was never a
-measurement of the table - it was a correction surface, tuned until picks landed, absorbing
-camera-pose and forward-kinematics error along the way. That also explains why it stopped
-working the moment anything moved: it was compensating for errors specific to one setup.
+### Settled along the way
 
-Separately, a near-flat plane in arm coordinates is what the geometry predicts anyway. The
-arm's +Z is normal to its base plate, not vertical, so bolting the base to the sloping desk
-tilts the whole coordinate frame with the desk - and the markers sit on that same surface.
-The desk's slope is real but does not appear in these coordinates; it matters for gravity,
-not for geometry. The base is confirmed bolted parallel and flat to the desk, carrying the
-same slope, so this holds - see HARDWARE.md.
+- **The table plane was never the problem.** The constants actually in use after bolting down
+  were `0.0086 / 0.0045 / 6.95`, near-flat and within 0.7 mm of the least-squares plane through
+  the marker Z values - exactly what `_fit_plane()` computes. The `0.1197 / 0.0573 / -14.35` set
+  committed at HEAD predates the bolting.
+- **The camera intrinsics are fine.** fx and fy agree to 0.02%, the principal point is 24 px off
+  centre in x and spot on in y, 70.1 degree horizontal FOV at 1920 px, zero skew.
+  `intrinsics_check()` measures their adequacy empirically rather than trusting an RMS that was
+  never recorded.
+- **The startup skew is the base zero, not a bent wrist.** At the startup servo of 90 against a
+  measured zero of 97.56 the arm points 5.77 degrees right, which is 25 mm at 250 mm of reach -
+  exactly what was observed. A base yaw offset displaces every joint in proportion to its
+  distance from the base, so it looks like it originates at the wrist.
 
-Deriving the plane from the markers is therefore the right design, and the old constants
-are obsolete.
+## Open
 
-## Needs real hardware
+### 1. Finish tuning grasp depth
 
-Nothing below can be settled in software. In rough priority order.
+Picks land slightly high. `z_grasp_offset` is genuinely in control for the first time, so this is
+a matter of adjusting it a couple of mm at a time from the current -7.6.
 
-### 1. Confirm the pose is actually fixed
+### 2. Improve the pitch-joint calibration
 
-Run the camera with all four markers visible and compare the two reprojection numbers. The
-prediction is that "solve" was always small and "in use" was large - i.e. the averaging was
-corrupting a good solve. If both are large instead, the fault is in the marker coordinates
-or the intrinsics and the next two items become urgent.
+The current fit cross-validates at ~11 mm, from eight marker touches. Three weaknesses, each
+measurable:
 
-### 2. Fix forward kinematics  **(measured 2026-10-19 - FK is distorted)**
+- **All touches were at table height**, over 228-353 mm of reach. Anything well outside that -
+  the 135 mm hover, for instance - is extrapolation. Touching each marker again with the tip
+  resting on a box of known height would fix this; simulation puts it at ~6.5 mm.
+- **Three of four markers were touched at wrist pitches only 4-13 degrees apart.** 25-30 degrees
+  of separation is what the fit needs.
+- **The wrist roll changed between batches** (69 then 180). If the grasp point sits off the roll
+  axis, rolling physically moves the fingertip, so the batches do not share one tool geometry.
+  Keep roll constant. Costs about 10 mm.
 
-The marker layout has now been tape-measured, and the arm-measured model is the wrong
-**shape**, not merely misplaced:
+The fitted wrist zero, 236.7 degrees, lies outside the joint's 49.5-180 travel. The parameters
+are partly degenerate even though the predictions are not - which is the distinction that matters
+for control, but it means the individual numbers should not be read as physical.
 
-| pair | tape | arm-measured model | diff |
-|---|---|---|---|
-| 0-1 (near edge) | 392 | 351.9 | **-40.1** |
-| 0-2 (left side) | 152 | 188.5 | +36.5 |
-| 0-3 (diagonal) | 420 | 451.6 | +31.6 |
-| 1-2 (diagonal) | 436 | 472.2 | +36.2 |
-| 1-3 (right side) | 174 | 208.6 | +34.6 |
-| 2-3 (far edge) | 401 | 495.6 | **+94.6** |
+### 3. Measure the off-axis tool offsets
 
-The real layout is a near-rectangle: near edge 392, far edge 401, ratio **1.02**. The
-arm-measured model is a strong trapezoid: 352 and 496, ratio **1.41**. The tape closes as a
-planar quadrilateral to 1.0 mm, so the measurements themselves are sound.
+`tool.perp` and `tool.lateral` are still zero and unmeasured. The planar fit cannot see them: it
+uses only radius and height, both in the arm's plane, so an off-axis grasp point is invisible to
+it. If picks are systematically off to one side in a way that changes with wrist roll, this is
+the cause.
 
-Pairwise distances are invariant under rotation and translation, so no placement, trim or
-offset can reconcile these. Best-fit rigid placement of the true shape onto the measured
-points leaves **38 mm RMS** - 50 mm at the far markers, 22 mm at the near ones - so the
-distortion **grows with reach**. Allowing a uniform scale only improves it to 34 mm, which
-rules out a simple scale error.
+### 4. Re-shoot the camera intrinsics (low priority)
 
-Note what this does to the camera. A rectangle viewed obliquely projects to a trapezoid, so
-handing solvePnP a trapezoidal model of a rectangular reality lets the solver absorb much of
-the error as **camera tilt**. That produces a modest reprojection figure while throwing every
-raycast off by centimetres, with the error growing across the table. It explains the original
-symptom pattern better than the rotation-averaging bug alone, and the two were compounding.
-
-**Mitigation already in place:** `markers_from_tape()` rebuilds the model with the measured
-shape, placed by rigidly fitting it onto the touched points. That makes the camera pose
-trustworthy, because solvePnP is far more sensitive to shape than to placement. The placement
-is still FK-derived, so expect a residual systematic offset of a few cm until the root cause
-is fixed. `tape_check()` now guards this permanently and complains at startup.
-
-**Root cause, still open.** Neither a pure radial error nor a pure yaw error fits the data:
-
-| marker | FK reach r | FK yaw |
-|---|---|---|
-| 0 | 178.7 | +72.85° |
-| 1 | 185.2 | -77.68° |
-| 2 | 337.6 | +49.02° |
-| 3 | 339.3 | -45.12° |
-
-Solving for the reach each edge implies, holding the FK yaw angles fixed:
-
-| edge | FK reach | reach the tape implies | FK error |
-|---|---|---|---|
-| near (0-1) | ~182 | ~203 | **11% too short** |
-| far (2-3) | ~338 | ~274 | **19% too long** |
-
-**The error changes sign with reach**, crossing zero somewhere near r = 250 mm. That is the
-most informative thing in the dataset, because it discriminates between the candidates:
-
-- A **link-length** error contributes `eps * L * cos(a)` to reach. Across the forward working
-  range those cosines keep their sign, so a wrong link length scales reach monotonically - it
-  cannot overestimate at long reach while underestimating at short reach.
-- A **joint-zero** error contributes roughly `-L * sin(a) * delta`. Between a folded pose (the
-  near markers) and an extended one (the far markers) `sin(a)` changes substantially, so a zero
-  error naturally produces an error that varies in magnitude *and flips sign* with reach.
-
-So the sign flip points at the **shoulder and elbow zeros** rather than the link lengths.
-Re-measure those first; it is also the cheaper measurement. Revised order:
-
-1. **Shoulder/elbow zeros.** Favoured by the sign flip above.
-2. **Servo pulse scale** (HARDWARE.md): 0-180 degrees maps to 732-2441 microseconds while
-   MG996R are nominally 500-2500, so a commanded degree may not be an actual degree. This
-   acts as a gain on every joint angle, so it too varies with pose.
-3. **Gravity sag at extension**, inherently reach-dependent, and a cheap arm has plenty. It
-   would push the far markers outward when recorded, which matches the sign.
-4. **Link lengths**, measured between brackets rather than between axes of rotation. Still
-   worth checking, but demoted: alone it cannot produce the sign flip.
-5. **Tool offset**, still unmeasured, contaminating each touch differently by wrist pitch.
-
-These are not mutually exclusive and would partly mask one another, which is why the
-Cartesian measurement below is worth more than any further inference from four points.
-
-Settling this needs the direct measurement below.
-
-### 2c. Two separate joint faults, not one  **(revised 2026-10-19)**
-
-An earlier version of this file claimed a single shared servo gain explained everything. That
-was too strong, and a direct observation contradicts it: at the pose the model calls all-zero
-(arm straight up) **the real arm leans slightly forward**, and it does so on a flat surface as
-well as on the bolted slanted desk. Checking both surfaces rules out the desk, so this is the
-arm's own zero calibration. A gain error cannot produce it - at zero commanded angle a gain
-error contributes nothing, so a lean at that pose is positive evidence of a ZERO error.
-
-The two faults are separable by their signatures, and the base yaw data settles that one:
-
-| marker | FK yaw | true yaw | difference | ratio |
-|---|---|---|---|---|
-| ID0 | +72.85 | +54.62 | +18.23 | 1.334 |
-| ID1 | -77.68 | -61.37 | -16.31 | 1.266 |
-| ID2 | +49.02 | +35.17 | +13.85 | 1.394 |
-| ID3 | -45.12 | -34.71 | -10.41 | 1.300 |
-
-The differences **flip sign with the angle** while the ratios hold steady at 1.32 (spread
-3.5%). A zero offset would add the same signed amount to every yaw; it does not. So:
-
-- **Base yaw: a gain error**, confirmed multiplicative. FK over-reports by about a third.
-- **Pitch joints: at least a zero error**, confirmed by the forward lean. Probably a gain
-  error too, since they share the pulse mapping, but four marker positions cannot separate
-  the two in reach - both produce pose-dependent reach error, which is why the earlier
-  single-cause reading looked sufficient.
-
-This is why `config.json` carries **both** `zero` and `gain` per joint, and why calibrating
-only one of them would leave the arm wrong. `fit_servo_calibration.py` fits both at once from
-measured angles.
-
-### 2b. Measure the markers in Cartesian coordinates  **(done 2026-10-19)**
-
-Measured and installed: ID0 (134.2, +189), ID1 (109.2, -200), ID2 (285.2, +201),
-ID3 (290.2, -201), from perpendicular offsets to a drawn centre line plus distances along it
-and a 33.2 mm datum correction to the rotation axis. These agree with the six independent
-tape distances to 7 mm worst and 2 mm on five of six pairs, so the marker model no longer
-depends on the arm at all and the camera pose is now trustworthy in absolute terms.
-
-The remaining uncertainty is the X datum: solving for the offset that best fits the yaw-gain
-story prefers 55 mm over the measured 33.2 mm, but the fit barely improves (spread 0.0454
-against 0.0470), so the method cannot distinguish them. The practical consequence is that the
-base gain is pinned only to the range 1.30-1.42. Measuring the gain directly on the servo
-settles it and does not depend on the datum at all.
-
-Historical note - the tape fixed the shape but not where it sat relative to the base, which is
-why rebuilding from tape alone still carried the FK placement error. Eight numbers remove the arm from the
-loop entirely: with a square along the robot's centre line, measure each marker's distance
-**along** that line from the base rotation axis (X) and its **perpendicular** offset (Y).
-
-That makes the marker model pure ground truth, the camera pose fully independent of FK, and
-turns the remaining arm pointing error into something directly measurable - commanded versus
-actual, with a known-good reference to compare against.
-
-### 3. Re-shoot the camera intrinsics
-
-The existing calibration used a 100x70 mm board at a working distance of about a metre,
-and its RMS was never recorded. Redo it with a 200-300 mm board and check the number.
-
-### 4. Measure the tool offsets
-
-Procedure in CALIBRATION.md step 3. Then re-record all four markers at a single fixed
-wrist pitch and roll, and expect `z_grasp_offset` to fall toward zero.
+The existing calibration used a 100x70 mm board at about a metre, and its RMS was never recorded.
+`intrinsics_check()` says whether this actually costs anything - under 2 mm means leave it alone.
 
 ### 5. The measurement campaign
 
-Millimetre paper on the workspace, 30-40 commanded points spanning the quadrants and the
-extremes, recording commanded versus actual. This is the right instrument, but it has to
-come **after** the above, or it will carefully document the bugs instead of the arm.
-
-Keep the results as the regression baseline.
+Millimetre paper, 30-40 commanded points spanning the quadrants and the extremes, commanded
+versus actual. This is verification rather than diagnosis now, and it becomes the regression
+baseline.
 
 ## Later
 
-- **Use all 16 ArUco corners, not 4 centroids.** The pose currently throws away 12 of the
-  16 available points. A projected-corner centroid is also not the projection of the true
-  centre under perspective, which is worth a few mm at this viewing angle. Each marker's
-  size and in-plane rotation can be bootstrapped by raycasting its detected corners onto
-  the table once a decent pose exists, then re-solving on the full 16-point model.
+- **Widen `SERVOMIN`/`SERVOMAX` in the firmware.** The measured gains cluster at 0.71-0.76 across
+  base, shoulder and elbow, consistent with the firmware's pulse window being ~85% of what the
+  MG996Rs want. Fixing it at source would remove the gains entirely. Deliberately deferred: every
+  joint `min`/`max` in `config.json` is expressed in the same servo units, so widening the range
+  invalidates all six limits at once and risks driving into the mechanical stops.
+- **Use all 16 ArUco corners rather than 4 centroids.** Checked, and currently *not* worth it: the
+  perspective bias from using the mean of four corners is 0.16 px at the far markers and 1.0 px at
+  the near ones - too small, and biased toward the wrong markers, to explain anything observed.
 - **Per-pose gravity compensation.** A cheap arm sags more at long reach, so FK error is
-  pose-dependent in a way no single trim can absorb. Worth characterising once the
-  measurement campaign exists to characterise it against.
-- **Retire the dead code.** `vision_agent.py` and `vision_config.json` are orphaned -
-  nothing imports them - and `debug-8a3ee4.log` is committed instrumentation output.
-  Left in place for now because the old agent is still the only reference for how the
-  working configuration behaved.
-- **Switch to `yolov8s-worldv2.pt`.** Downloaded but unused; `vision.py` still hardcodes
-  the v1 weights.
-- **Automated regression on real hardware.** `test_geometry.py` covers the maths offline.
-  Nothing covers "the arm actually goes where it is told", and that gap is where every bug
-  in this project has lived.
+  pose-dependent in a way no single trim absorbs. Worth characterising once the measurement
+  campaign exists to characterise it against.
+- **Retire the dead code.** `vision_agent.py` and `vision_config.json` are orphaned; nothing
+  imports them. `debug-8a3ee4.log` is committed instrumentation output, though it earned its keep
+  once - the pixel coordinates in it helped confirm the calibration resolution.
+- **Switch to `yolov8s-worldv2.pt`.** Downloaded but unused; `vision.py` still hardcodes v1.
+- **Automated regression on real hardware.** `test_geometry.py` covers the maths offline. Nothing
+  covers "the arm actually goes where it is told", and that gap is where every bug in this project
+  has lived.
+
+## Lessons worth keeping
+
+- **Low residual is not accuracy.** A seven-parameter fit to eight observations produced 1-5 mm
+  residuals and physically impossible parameters, predicting ~154 mm wrong everywhere it had not
+  been measured. Cross-validate, or score predictions - never the fit itself.
+- **Parameter identifiability and prediction accuracy are different things.** Degenerate
+  parameters are fine if the predictions agree, and predictions are what control needs.
+- **Check clamps end to end.** Grasp depth was pinned at zero by two independent clamps in
+  different files. Testing each in isolation is exactly what let it hide.
+- **Separate the error from the thing that reports it.** The reprojection figure shown was computed
+  from the averaged pose, so a corrupted average looked identical to a bad solve. Tracking both
+  numbers is what made the fault visible.
+- **Measure something the system cannot see.** Every length was FK-derived, so an FK error was
+  invisible by construction - the camera was fitted to the arm's own distorted space and the whole
+  loop stayed self-consistent while being wrong. One tape measure broke it open.

@@ -64,6 +64,19 @@ gripper.
 
 ## Current state
 
-Mechanically and electrically the arm works. The software registration between camera and
-arm was recently repaired - see [docs/ROADMAP.md](docs/ROADMAP.md) for what was wrong,
-what is fixed, and what still needs measuring on real hardware.
+**Working, and closer to good than it has been - but not finished.** The arm picks objects off
+the table reasonably reliably.
+
+| | |
+|---|---|
+| Camera pose | Solid. Mean reprojection ~1.8 px, camera position steady |
+| Marker model | Hand-measured, independently tape-checked to 7 mm worst |
+| Arm kinematics | All four joints calibrated. ~11 mm at table height (cross-validated) |
+| Grasp depth | Still being tuned |
+| Tool model | Along-axis length fitted; off-axis offsets unmeasured |
+
+The remaining errors are millimetres rather than centimetres. Getting from "works most of the
+time" to "works every time" is what [docs/ROADMAP.md](docs/ROADMAP.md) tracks - it also records
+what was wrong, how each fault was found, and which hypotheses were ruled out and why.
+
+Offline tests: `python test_geometry.py` (79 tests, no hardware needed).
