@@ -69,6 +69,29 @@ away barely constrains focal length or distortion, and a wrong focal length cann
 absorbed by the pose - it surfaces as irreducible reprojection error and as table
 coordinates that drift with position. Aim for 200-300 mm across.
 
+**Before re-shooting, check whether you need to.** `intrinsics_check()` in the status feed
+compares two independent pixel-to-table mappings: the raycast, which goes through the camera
+matrix and the solved 3D pose, and a homography fitted straight from the four marker
+correspondences, which uses neither. Both share the same marker model, so that error cancels
+and what remains implicates the intrinsics specifically.
+
+Sensitivity is about **3.4 mm of disagreement per 1% of focal-length error**, so the number
+pins the focal length to roughly 0.3%:
+
+| disagreement (worst) | meaning |
+|---|---|
+| under 2 mm | intrinsics are fine for this workspace, whatever the calibration RMS was |
+| 2 - 10 mm | a 1-3% focal error; worth re-shooting eventually, not urgent |
+| over 10 mm | 3%+ out; re-shoot before chasing anything else in the camera path |
+
+The current `camera_matrix.npy` is structurally sound: fx and fy agree to 0.02%, the
+principal point is 24 px off centre in x and spot on in y, implied horizontal FOV is 70.1
+degrees at 1920 px, zero skew, and k1 = -0.35 is ordinary barrel distortion. It is plainly a
+1920x1080 calibration made of plausible numbers. Note though that cy came out within 0.03 px
+of exactly 540, which is where OpenCV initialises it - a sign the principal point and focal
+length were weakly constrained and correlated, as a small board at a single distance would
+leave them. Plausible but imprecise.
+
 Read the RMS the script prints:
 
 | RMS | Verdict |

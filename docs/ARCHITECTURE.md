@@ -87,6 +87,20 @@ pixel onto the fitted table plane and returns arm-frame X/Y. This single functio
 clicking, object detection and the jaw-angle estimate, so an error in the pose or the plane
 shows up everywhere at once.
 
+`pixel_to_table_h()` is a second, independent route to the same answer: a homography fitted
+directly from the four marker correspondences, using neither the camera matrix nor the solved
+pose. `intrinsics_check()` compares the two across the marker area. Since both share the
+marker model, that error cancels and the residual implicates the intrinsics - about 3.4 mm of
+disagreement per 1% of focal error.
+
+**The homography is a cross-check, not an alternative.** Four points give 8 equations for its
+8 unknowns, so it fits them perfectly no matter how wrong the marker model is, and carries no
+residual to warn anyone with. PnP has 6 unknowns for the same 8 equations, and those 2 spare
+degrees of freedom are the only reason a wrong marker model surfaced as reprojection error at
+all. Replacing PnP with a homography would have silently absorbed a 95 mm shape error. The
+homography also has no camera position to cast a ray from, so it cannot handle a point above
+the table.
+
 **Detection thread.** Lazily loads YOLO-World with editable text prompts. `_axis()` finds
 each object's long axis with Otsu plus `fitLine`, then converts it to a jaw-closing angle
 in table coordinates, because a gripper has to close *across* a pen, not along it.

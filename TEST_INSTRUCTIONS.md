@@ -76,11 +76,63 @@ why neither a pure reach error nor a pure yaw error explains it on its own.
 
 ### The eight numbers that would finish this
 
-The tape fixes shape but not where the shape sits relative to the base, which is why the
-placement error survives. With a carpenter's square along the robot's centre line, measure
-for each marker its distance **along** the centre line from the base rotation axis, and its
-**perpendicular** offset. Eight numbers, no arm involved, and the marker model stops
-depending on FK entirely. Send them over and I will wire them in.
+Think of the table as graph paper with the **robot's base at (0, 0)** and the robot looking
+straight down the X axis. I need each marker's X and Y in mm. That is it - four markers, two
+numbers each.
+
+```
+                    the robot looks this way
+                              |
+                   +X  (forward, away from you)
+                              ^
+                              |
+          marker 2  *         |         *  marker 3
+                    :         |         :
+                    :     Y2  |  Y3     :
+                    :<------- | ------->:
+          marker 0  *         |         *  marker 1
+                    :         |         :
+                    :         | X0      :
+                    :         |         :
+     +Y  <--------------------O-------------------->  -Y
+      (robot's LEFT)     base axis            (robot's RIGHT)
+```
+
+**How to measure it**
+
+1. Send the base to its zero (servo 90) so the arm points straight ahead. Lay a tape measure
+   or a taut string flat on the table, starting under the **centre of the base's rotation**
+   and running straight out the way the arm is pointing. That string is your X axis.
+2. For each marker, two readings:
+   - **Y** - the straight-across distance from the string to the marker's centre, at right
+     angles to the string. Use a book corner or a set square so it really is at right angles.
+     **Positive if the marker is on the robot's LEFT, negative if on its RIGHT.**
+   - **X** - read off the string at the point where that right-angle line meets it.
+
+So for your layout I am expecting roughly: markers 0 and 2 with **positive** Y, markers 1 and
+3 with **negative** Y, and markers 2 and 3 with the larger X since they sit further out.
+
+**Two things that would spoil it**
+
+- The origin is the base's **axis of rotation** - the centre of the plate that turns - not the
+  corner or edge of the base plate. If the base plate is 80 mm across, the edge is 40 mm from
+  where I need you to start.
+- Measure to the **centre of each marker square**, the same point the arm was told to touch.
+
+**Why this finishes it.** Your six tape distances fixed the markers' shape relative to each
+other, but said nothing about where that shape sits relative to the robot - which is why the
+rebuild still leans on the arm for placement and still carries a couple of cm of offset.
+These eight numbers put the shape in the robot's own frame using only a tape measure, so the
+marker model stops depending on forward kinematics entirely. The camera pose then becomes
+trustworthy in absolute terms, and whatever error is left is purely the arm not going where
+it is told - which is directly measurable against a reference you trust.
+
+**If the right angles are awkward**, there is a fallback: measure the four straight-line
+distances from the base rotation axis to each marker centre. With the six you already gave,
+that fixes everything except which direction counts as straight ahead - so I would need one
+extra angular reference, such as the perpendicular offset of any single marker, or where the
+string passes between two of them. Same effort in practice, more ways to go wrong, so prefer
+the X/Y method above.
 
 ## 2. Camera, no arm
 
@@ -251,3 +303,5 @@ With these I can tell you immediately whether the diagnosis was right and what i
 4. Click accuracy at each of the four markers (clicked vs. stored coordinates).
 5. Any `rejected` lines from the log, verbatim.
 6. The logged `Camera running at WxH`.
+7. The `intrinsics_check` figure from the status feed - it says whether your existing
+   `camera_matrix.npy` needs re-shooting at all (under 2 mm: leave it alone).

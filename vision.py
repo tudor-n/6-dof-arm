@@ -149,6 +149,7 @@ class Vision:
         self.detector = aruco.ArucoDetector(aruco.getPredefinedDictionary(aruco.DICT_4X4_50), p)
         # pose
         self.hist = deque(maxlen=15); self.rvec = self.tvec = None
+        self.H = None              # pixel -> table homography, independent of K and the pose
         self.pose_locked = False
         self.err, self.proj, self.seen = {}, {}, []
         # pose diagnostics: raw_err is the per-frame solve, avg_err the pose actually in use
@@ -383,6 +384,67 @@ class Vision:
                            f"(limit {MAX_POSE_REPROJ_PX:.0f}px)")
         return True, f"pose ok (worst marker {worst:.1f}px)"
 
+    # ---------- a second, independent pixel -> table mapping ----------
+    def _update_homography(self, centers):
+        """Fit pixels -> table plane straight from the four marker correspondences.
+
+        This uses neither the camera matrix nor the solved pose - only where the markers are
+        on the table and where they appear in the (already undistorted) frame. For points on
+        the table plane it is exact.
+
+        It is NOT a replacement for the PnP pose. Four points give 8 equations for a
+        homography's 8 unknowns, so it fits them perfectly no matter how wrong the marker
+        model is and carries no residual to warn you with. PnP has 6 unknowns for the same 8
+        equations, and those 2 spare degrees of freedom are the only reason a bad marker
+        model shows up as reprojection error at all. The homography also cannot handle a
+        point above the table, having no camera position to cast a ray from.
+
+        Its value is as a cross-check on the intrinsics, which it does not share.
+        """
+        need = sorted(self.markers)
+        if not all(i in centers for i in need) or len(need) != 4:
+            self.H = None
+            return
+        src = np.array([centers[i] for i in need], np.float32)
+        dst = np.array([self.markers[i][:2] for i in need], np.float32)
+        try:
+            self.H = cv2.getPerspectiveTransform(src, dst)
+        except cv2.error:
+            self.H = None
+
+    def pixel_to_table_h(self, u, v):
+        """Table XY for a pixel, via the homography. No intrinsics, no pose, plane only."""
+        if self.H is None:
+            return None
+        q = cv2.perspectiveTransform(np.array([[[float(u), float(v)]]], np.float64), self.H)[0, 0]
+        return (float(q[0]), float(q[1]))
+
+    def intrinsics_check(self, n=5):
+        """Compare the two independent pixel -> table mappings across the marker area.
+
+        The raycast goes through the camera matrix and the solved 3D pose; the homography uses
+        neither. Both share the same marker model, so that error cancels and what is left
+        implicates the INTRINSICS. Small disagreement means the camera matrix is good enough
+        for this workspace, whatever its calibration RMS was.
+        """
+        if self.H is None or self.rvec is None or not self.proj:
+            return None
+        px = np.array(list(self.proj.values()), float)
+        lo, hi = px.min(axis=0), px.max(axis=0)
+        ds = []
+        for i in range(n):
+            for j in range(n):
+                u = lo[0] + (hi[0] - lo[0]) * (i / (n - 1) if n > 1 else 0.5)
+                v = lo[1] + (hi[1] - lo[1]) * (j / (n - 1) if n > 1 else 0.5)
+                a = self.pixel_to_table(u, v, raw=True, z_off=0.0)
+                b = self.pixel_to_table_h(u, v)
+                if a and b:
+                    ds.append(math.hypot(a[0] - b[0], a[1] - b[1]))
+        if not ds:
+            return None
+        return {"mean": round(float(np.mean(ds)), 2), "worst": round(float(np.max(ds)), 2),
+                "n": len(ds)}
+
     # ---------- geometry ----------
     def pixel_to_table(self, u, v, raw=False, z_off=None):
         if self.rvec is None or self.K is None: return None
@@ -499,6 +561,7 @@ class Vision:
                     self.rvec = avg_rotation([h[0] for h in self.hist])
                     self.tvec = np.mean([h[1] for h in self.hist], axis=0)
                     if first: self.log("Camera pose found.", "info")
+        self._update_homography(centers)
         self.err, self.proj = {}, {}
         if self.rvec is not None and centers:
             have = [i for i in centers if i in self.markers]
@@ -695,6 +758,7 @@ class Vision:
                 "markers": {str(k): v for k, v in self.markers.items()}, "touched": {str(k): v for k, v in self.touched.items()},
                 "measured": self.measured, "fit_info": self.fit_info, "plane": [round(c, 5) for c in self.plane],
                 "tape": self.tape, "tape_check": self.tape_check(), "aruco_mm": self.aruco_mm,
+                "intrinsics_check": self.intrinsics_check(),
                 "settings": self.s, "roll": self.roll, "detect": self.detect_on, "prompts": self.prompts,
                 "dets": [{"name": d["name"], "conf": round(d["conf"], 2), "x": round(d["x"], 1), "y": round(d["y"], 1),
                           "closing": None if d["closing"] is None else round(d["closing"], 1)} for d in self.dets[:5]],

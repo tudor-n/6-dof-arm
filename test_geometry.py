@@ -426,6 +426,74 @@ def test_markers_from_tape_reports_the_fk_residual():
     assert "forward kinematics is distorted" in info,         "a 38 mm RMS placement residual must be called out, not buried"
 
 
+# ----------------------------------- homography as a cross-check on the intrinsics
+
+def scene_with_homography(K_scale=1.0):
+    """Synthetic scene with both mappings live. K_scale fakes a focal-length error."""
+    vis, rvec, tvec, cam_pos = synthetic_scene()
+    if K_scale != 1.0:
+        vis.K = vis.K.copy()
+        vis.K[0, 0] *= K_scale
+        vis.K[1, 1] *= K_scale
+    vis.rvec, vis.tvec = rvec, tvec
+    vis.s["object_z"] = 0.0
+    vis.s["x_trim"] = vis.s["y_trim"] = 0.0
+    ids = sorted(vis.markers)
+    # pixels the markers land on, using the TRUE intrinsics the scene was built with
+    true_K = np.load("camera_matrix.npy")
+    obj = np.array([vis.markers[i] for i in ids], np.float32)
+    px = cv2.projectPoints(obj.reshape(-1, 1, 3), rvec, tvec, true_K, vis.Z)[0].reshape(-1, 2)
+    centers = {i: px[k] for k, i in enumerate(ids)}
+    vis._update_homography(centers)
+    vis.proj = dict(centers)
+    return vis, centers
+
+
+def test_homography_maps_the_markers_onto_themselves():
+    vis, centers = scene_with_homography()
+    assert vis.H is not None
+    for mid, uv in centers.items():
+        got = vis.pixel_to_table_h(uv[0], uv[1])
+        want = vis.markers[mid][:2]
+        assert math.hypot(got[0] - want[0], got[1] - want[1]) < 0.5, f"marker {mid}: {got} vs {want}"
+
+
+def test_homography_needs_all_four_markers():
+    vis, centers = scene_with_homography()
+    vis._update_homography({k: v for k, v in centers.items() if k != 2})
+    assert vis.H is None
+    assert vis.pixel_to_table_h(500, 500) is None
+
+
+def test_two_mappings_agree_when_the_intrinsics_are_right():
+    """With the real camera matrix the raycast and the homography must coincide."""
+    vis, _ = scene_with_homography()
+    chk = vis.intrinsics_check()
+    assert chk is not None and chk["n"] >= 20
+    assert chk["worst"] < 1.0, f"mappings disagree by {chk['worst']} mm with correct intrinsics"
+
+
+def test_the_check_actually_detects_a_wrong_focal_length():
+    """Guards against a vacuous test: a 10% focal error must show up."""
+    good = scene_with_homography(1.0)[0].intrinsics_check()["worst"]
+    bad = scene_with_homography(1.10)[0].intrinsics_check()["worst"]
+    assert bad > 10.0, f"a 10% focal error only moved the check to {bad} mm - no detecting power"
+    assert bad > good * 10, f"good {good} mm vs bad {bad} mm - not discriminating"
+
+
+def test_homography_cannot_detect_a_bad_marker_model():
+    """The point of keeping PnP: 4 points fit a homography exactly however wrong they are,
+    so it reports nothing. This is why the reprojection error was the only warning."""
+    vis, centers = scene_with_homography()
+    vis.markers = {k: [v[0] * 1.3, v[1] * 0.7, v[2]] for k, v in vis.markers.items()}
+    vis._update_homography(centers)
+    for mid, uv in centers.items():
+        got = vis.pixel_to_table_h(uv[0], uv[1])
+        want = vis.markers[mid][:2]
+        assert math.hypot(got[0] - want[0], got[1] - want[1]) < 0.5, \
+            "a homography always fits 4 points perfectly - that is the blindness being documented"
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():
