@@ -1,18 +1,32 @@
 <!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Arm</title>
+<script>
+// Old WebKit (Android 4.2 WebView, e.g. Galaxy Tab 3 Lite SM-T110) has no flex-wrap: lay out with inline-blocks instead.
+(function(){var d=document.documentElement,s=d.style;if(!('flexWrap' in s)&&!('webkitFlexWrap' in s))d.className+=' noflex';})();
+</script>
 <style>
-:root{--bg:#14161a;--panel:#1d2025;--line:#2c3138;--fg:#e6e8eb;--dim:#8a919b;--acc:#4ea1ff;--ok:#38c172;--warn:#f0a030;--bad:#ef5350}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
-header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
-button{background:#2a2f37;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 12px;font:inherit;cursor:pointer}
-button:hover{border-color:var(--acc)}button.on{background:var(--ok);color:#06210f;border-color:var(--ok);font-weight:600}
-button.tab.sel{border-color:var(--acc);color:var(--acc)}
-.chip{padding:3px 8px;border-radius:10px;font-size:12px;background:#2a2f37;color:var(--dim)}
-.chip.warn{background:#4a3410;color:var(--warn)}.chip.ok{background:#12351f;color:var(--ok)}
+/* colours are literals, not CSS variables, so old browsers get them too:
+   bg #14161a  panel #1d2025  line #2c3138  fg #e6e8eb  dim #8a919b  acc #4ea1ff  ok #38c172  warn #f0a030  bad #ef5350 */
+*{box-sizing:border-box}body{margin:0;background:#14161a;color:#e6e8eb;font:14px system-ui,sans-serif}
+/* Nothing scrolls: the page is pinned to the screen so a stray drag cannot carry the controls away.
+   Only <main> on the Calibrate / Camera tabs scrolls, inside itself (it holds more than a screen). */
+html,body{height:100%;overflow:hidden}
+body{position:fixed;left:0;top:0;right:0;bottom:0;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:rgba(0,0,0,0)}
+input,textarea{-webkit-user-select:text;user-select:text}
+main{position:absolute;left:0;right:0;bottom:0;overflow:hidden}
+main.scroll{overflow-y:auto;-webkit-overflow-scrolling:touch}
+#move{justify-content:center;text-align:center}#move .card{text-align:left}
+#mvctl .row{margin:4px 0}#mvctl .mono{font-size:12px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:10px 14px;background:#1d2025;border-bottom:1px solid #2c3138}
+button{background:#2a2f37;color:#e6e8eb;border:1px solid #2c3138;border-radius:6px;padding:7px 12px;font:inherit;cursor:pointer}
+button:hover{border-color:#4ea1ff}button.on{background:#38c172;color:#06210f;border-color:#38c172;font-weight:600}
+button.tab.sel{border-color:#4ea1ff;color:#4ea1ff}
+.chip{padding:3px 8px;border-radius:10px;font-size:12px;background:#2a2f37;color:#8a919b}
+.chip.warn{background:#4a3410;color:#f0a030}.chip.ok{background:#12351f;color:#38c172}
 main{padding:12px;display:flex;flex-wrap:wrap;gap:12px}
 .views{display:flex;flex-wrap:wrap;gap:12px;flex:1 1 600px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}
+.card{background:#1d2025;border:1px solid #2c3138;border-radius:8px;padding:10px}
 canvas{width:100%;touch-action:none;background:#101215;border-radius:6px;display:block}
 .sidecard{flex:1 1 560px}.topcard{flex:1 1 300px}
 @media (max-width: 950px) and (orientation: landscape) {
@@ -40,7 +54,7 @@ canvas{width:100%;touch-action:none;background:#101215;border-radius:6px;display
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--acc);
+  color: #4ea1ff;
 }
 .v-slider input[type=range] {
   -webkit-appearance: slider-vertical;
@@ -51,13 +65,28 @@ canvas{width:100%;touch-action:none;background:#101215;border-radius:6px;display
   cursor: pointer;
 }
 
-.row{display:flex;align-items:center;gap:10px;margin:8px 0}.row label{width:90px;color:var(--dim)}
+.row{display:flex;align-items:center;gap:10px;margin:8px 0}.row label{width:90px;color:#8a919b}
 .row input[type=range]{flex:1}.row span{width:60px;text-align:right;font-variant-numeric:tabular-nums}
-.panel{flex:1 1 100%}table{width:100%;border-collapse:collapse}td{padding:6px 4px;border-top:1px solid var(--line)}
-td input[type=range]{width:100%}input[type=number]{width:70px;background:#101215;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:4px}
-.help{color:var(--dim);line-height:1.5;margin:0 0 10px}.mono{font-variant-numeric:tabular-nums;color:var(--dim)}
+.panel{flex:1 1 100%}table{width:100%;border-collapse:collapse}td{padding:6px 4px;border-top:1px solid #2c3138}
+td input[type=range]{width:100%}input[type=number]{width:70px;background:#101215;color:#e6e8eb;border:1px solid #2c3138;border-radius:4px;padding:4px}
+.help{color:#8a919b;line-height:1.5;margin:0 0 10px}.mono{font-variant-numeric:tabular-nums;color:#8a919b}
+
+/* ---- no flex-wrap: inline-blocks (gaps become margins, rows wrap like text) ---- */
+.noflex header>*{display:inline-block;vertical-align:middle;margin:0 8px 8px 0}
+.noflex main,.noflex .views{display:block}
+.noflex .card{margin-bottom:12px}
+.noflex .sidecard{display:inline-block;vertical-align:top;width:56%;margin-right:1%}
+.noflex .topcard{display:inline-block;vertical-align:top;width:41%}
+.noflex .row>*{display:inline-block;vertical-align:middle;margin-right:8px}
+.noflex .row input[type=range]{width:55%}
+.noflex #mvctl input[type=range]{width:35%}
+.noflex .v-slider{display:block;text-align:center}
+.noflex .v-slider>*{display:block;margin:0 auto 5px}
+/* a vertical range input does not exist here: rotate a horizontal one; the negative margins give it a 32x160 footprint */
+.noflex .v-slider input[type=range]{-webkit-appearance:slider-horizontal;width:160px;height:32px;margin:64px -64px;
+  -webkit-transform:rotate(-90deg);transform:rotate(-90deg)}
 </style></head><body>
-<header>
+<header id="hdr">
  <button id="live">Live: OFF</button>
  <button id="home">Start pose</button><button id="rlx5" title="cut gripper PWM (limp, no heat)">Relax gripper</button><button id="wake" title="re-enable PWM on all joints">Wake all</button><button id="rlxa" title="cut PWM on ALL joints - arm may drop">Relax all</button><button id="rest">Rest pose</button>
  <span>Speed <input id="speed" type="range" min="10" max="180" value="60"> <span id="speedv" class="mono">60°/s</span></span>
@@ -67,14 +96,14 @@ td input[type=range]{width:100%}input[type=number]{width:70px;background:#101215
 <main>
  <div id="move" class="views">
   <div class="card sidecard" style="position:relative">
-    
+
     <!-- LEFT THUMB: WRIST ROLL -->
     <div class="v-slider left">
       <label>Roll</label>
       <input id="roll" type="range" orient="vertical" min="0" max="180" step="1">
       <span id="rollv"></span>
     </div>
-    
+
     <!-- RIGHT THUMB: GRIPPER -->
     <div class="v-slider right">
       <label>Grip</label>
@@ -85,9 +114,8 @@ td input[type=range]{width:100%}input[type=number]{width:70px;background:#101215
     <canvas id="side" width="560" height="460"></canvas>
   </div>
   <div class="card topcard"><canvas id="top" width="420" height="460"></canvas></div>
-  <div class="card" style="flex:1 1 100%">
-   <div class="row"><label>Tip drag</label><label style="width:auto;color:var(--fg)"><input type="checkbox" id="lock"> Lock tool pitch while dragging the tip (otherwise the gripper angle is chosen automatically)</label></div>
-   <div class="row"><label>Tool pitch</label><input id="pitch" type="range" min="-135" max="90" step="1"><span id="pitchv"></span></div>
+  <div class="card" id="mvctl" style="flex:1 1 100%">
+   <div class="row"><label>Tool pitch</label><input id="pitch" type="range" min="-135" max="90" step="1"><span id="pitchv"></span><label style="width:auto;color:#e6e8eb" title="otherwise the gripper angle is chosen automatically"><input type="checkbox" id="lock"> Lock pitch while dragging the tip</label></div>
    <div class="mono" id="readout"></div><div class="mono" id="rng"></div><div id="calchk" class="chip warn" style="display:none;margin-top:8px"></div><div id="restnote" class="chip ok" style="display:none;margin-top:8px"></div>
   </div>
  </div>
@@ -102,236 +130,343 @@ td input[type=range]{width:100%}input[type=number]{width:70px;background:#101215
  </div>
 </main>
 <script>
-let ws, cfg=null, st=null;
-const $=id=>document.getElementById(id);
-const send=o=>ws&&ws.readyState==1&&ws.send(JSON.stringify(o));
-function connect(){
- ws=new WebSocket(`ws://${location.host}/ws`);
- ws.onclose=()=>{$('hw').textContent='disconnected';setTimeout(connect,1000)};
- ws.onmessage=e=>{const m=JSON.parse(e.data);
-  if(m.type=='cfg'){cfg=m.cfg;buildCal();setRanges();}
-  else if(m.type=='tool'){}
-  else if(m.type=='restinfo'){const n=$('restnote');n.style.display='';n.textContent='Rest servo angles: '+m.servo.map(v=>v.toFixed(0)).join(', ')+(m.clipped?'  (some joints hit their limits - check)':'')+'  → put these in firmware cur[]/tgt[] and START_POSE if you want power-on to start here.';}
-  else if(m.type=='state'){st=m;if(!dragSide && !dragTop && st.pts_tgt) {
-      const t4 = tipOf(st.pts_tgt); liveTip = { x: t4[0], y: t4[1], z: t4[2] };
-    }updateStatus();updateCal();}
-  draw();};
+// Plain ES5 on purpose: this page must also run in the Android 4.2 WebView (no arrow functions,
+// let, template literals, WebSocket or pointer events there).
+var cfg=null, st=null;
+function $(id){return document.getElementById(id);}
+function each(a,fn){for(var i=0;i<a.length;i++)fn(a[i],i);}
+function tog(el,cls,on){el.classList[on?'add':'remove'](cls);}
+function hyp(a,b){return Math.sqrt(a*a+b*b);}
+function now(){return window.performance&&performance.now?performance.now():Date.now();}
+function closest(el,tag){tag=tag.toUpperCase();while(el&&el.nodeType==1){if(el.tagName==tag)return el;el=el.parentNode;}return null;}
+function onRange(el,fn){el.addEventListener('input',fn);el.addEventListener('change',fn);}  // old WebKit only fires change
+// DOM writes only when something changed: on a slow tablet every write costs a relayout
+function txt(el,s){s=String(s);if(el._t!==s){el._t=s;el.textContent=s;}}
+function cls(el,c){if(el.className!==c)el.className=c;}
+function show(el,on){var d=on?'':'none';if(el.style.display!==d)el.style.display=d;}
+function val(el,v,tol){if(!(Math.abs(el.value-v)<=(tol||0.5)))el.value=v;}
+function shown(id){return $(id).style.display!='none';}
+// Press/drag/release on el, with pointer events where they exist, else touch + mouse.
+// h.down(id,e) returns true to claim the press, h.move(id,e) true if it used the move, h.up(id).
+function track(el,h){
+ if(window.PointerEvent){
+  el.addEventListener('pointerdown',function(e){if(h.down(e.pointerId,e)&&el.setPointerCapture)el.setPointerCapture(e.pointerId);});
+  el.addEventListener('pointermove',function(e){if(h.move)h.move(e.pointerId,e);});
+  var pu=function(e){if(h.up)h.up(e.pointerId);};
+  el.addEventListener('pointerup',pu);el.addEventListener('pointercancel',pu);el.addEventListener('lostpointercapture',pu);
+  return;
+ }
+ function touches(e,fn){var hit=false,t=e.changedTouches;for(var i=0;i<t.length;i++)if(fn('t'+t[i].identifier,t[i]))hit=true;return hit;}
+ el.addEventListener('touchstart',function(e){if(touches(e,h.down))e.preventDefault();});
+ el.addEventListener('touchmove',function(e){if(h.move&&touches(e,h.move))e.preventDefault();});
+ var te=function(e){if(h.up)touches(e,h.up);};
+ el.addEventListener('touchend',te);el.addEventListener('touchcancel',te);
+ el.addEventListener('mousedown',function(e){
+  if(!h.down('m',e))return;e.preventDefault();
+  var mm=function(e){if(h.move)h.move('m',e);};
+  var mu=function(){document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);if(h.up)h.up('m');};
+  document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);});
 }
-function setRanges(){ 
+
+// ---- connection: WebSocket, or HTTP long-polling where there is none (or with ?legacy=1) ----
+var LEGACY=!window.WebSocket||/[?&]legacy=1/.test(location.search);
+var ws=null, usePoll=LEGACY, wsFails=0, listeners=[];
+var cid=Math.random().toString(36).slice(2)+Date.now().toString(36), outq=[], posting=false;
+function emit(m){for(var i=0;i<listeners.length;i++)listeners[i](m);}
+var DRAG={tip:1,joints:1};
+function sameKeys(a,b){for(var k in a)if(!(k in b))return false;for(k in b)if(!(k in a))return false;return true;}
+function send(o){
+ // while a POST is in flight a newer drag position replaces the queued one instead of piling up behind it
+ if(usePoll){var l=outq[outq.length-1];if(l&&DRAG[o.type]&&l.type==o.type&&sameKeys(l,o))outq[outq.length-1]=o;else outq.push(o);pump();}
+ else if(ws&&ws.readyState==1)ws.send(JSON.stringify(o));
+}
+function xhr(method,url,body,done){
+ var x=new XMLHttpRequest();x.open(method,url,true);
+ x.onreadystatechange=function(){if(x.readyState==4)done(x.status,x.responseText);};
+ if(body!=null)x.setRequestHeader('Content-Type','text/plain');
+ x.send(body);
+}
+function pump(){
+ if(posting||!outq.length)return;posting=true;var b=outq;outq=[];
+ xhr('POST','/send?id='+cid,JSON.stringify(b),function(s){posting=false;if(s!=200)$('hw').textContent='disconnected';pump();});
+}
+function poll(){
+ xhr('GET','/poll?id='+cid+'&t='+Date.now(),null,function(s,txt){
+  if(s!=200){$('hw').textContent='disconnected';setTimeout(poll,1000);return;}
+  var a;try{a=JSON.parse(txt);}catch(e){a=[];}
+  for(var i=0;i<a.length;i++)emit(a[i]);
+  setTimeout(poll,100);  // the server holds the request until something changes, so this only caps the rate
+ });
+}
+function connect(){
+ if(usePoll){poll();return;}
+ var opened=false;
+ try{ws=new WebSocket('ws://'+location.host+'/ws');}catch(e){usePoll=true;poll();return;}
+ ws.onopen=function(){opened=true;wsFails=0;};
+ // a WebSocket that never opens (blocked by a proxy or the kiosk app) twice in a row: fall back to polling
+ ws.onclose=function(){$('hw').textContent='disconnected';if(!opened&&++wsFails>=2)usePoll=true;setTimeout(connect,1000);};
+ ws.onmessage=function(e){emit(JSON.parse(e.data));};
+}
+// ---- rendering is decoupled from messages: they only mark things dirty, render() runs at most
+// once per RENDER_MS (10 Hz on the old tablet, which cannot keep up with 25 states a second)
+var RENDER_MS=LEGACY?100:0, renderQueued=false, lastRender=0, renderers=[], stDirty=false;
+function schedule(){if(renderQueued)return;renderQueued=true;setTimeout(render,Math.max(0,RENDER_MS-(now()-lastRender)));}
+function render(){renderQueued=false;lastRender=now();for(var i=0;i<renderers.length;i++)renderers[i]();}
+window.ARM={send:send,listen:function(fn){listeners.push(fn);},onRender:function(fn){renderers.push(fn);},schedule:schedule,
+ legacy:LEGACY,track:track,each:each,tog:tog,closest:closest,onRange:onRange,txt:txt,show:show};
+
+listeners.push(function(m){
+ if(m.type=='cfg'){cfg=m.cfg;drawKey=null;buildCal();setRanges();}
+ else if(m.type=='tool'){}
+ else if(m.type=='restinfo'){var n=$('restnote');n.style.display='';n.textContent='Rest servo angles: '+m.servo.map(function(v){return v.toFixed(0);}).join(', ')+(m.clipped?'  (some joints hit their limits - check)':'')+'  → put these in firmware cur[]/tgt[] and START_POSE if you want power-on to start here.';}
+ else if(m.type=='state'){st=m;stDirty=true;if(!dragSide && !dragTop && st.pts_tgt) {
+     var t4 = tipOf(st.pts_tgt); liveTip = { x: t4[0], y: t4[1], z: t4[2] };
+   }}
+ else return;
+ schedule();
+});
+renderers.push(function(){
+ if(st&&stDirty){stDirty=false;updateStatus();}
+ if(shown('cal'))updateCal();
+ fit();
+ if(shown('move'))draw();
+});
+
+// ---- fixed layout: <main> fills the screen under the header; on the Move tab the two views are
+// sized so that views + control card fit exactly (no scrolling), keeping the canvases' aspect ratio
+var fitKey=null;
+function fit(){
+ var mn=document.querySelector('main'),mv=shown('move'),hh=$('hdr').offsetHeight,W=window.innerWidth,H=window.innerHeight;
+ var ctl=mv?$('mvctl').offsetHeight:0,key=[W,H,hh,ctl,mv].join();
+ if(key===fitKey)return;fitKey=key;
+ mn.style.top=hh+'px';tog(mn,'scroll',!mv);if($('logcard'))show($('logcard'),!mv);
+ if(!mv){return;}
+ mn.scrollTop=0;
+ // 24 main padding, 12 gap between rows / cards, 22 card padding+border, a few px of slack
+ var h=Math.min(H-hh-24-12-ctl-22-4,(W-24-12-44-8)/((560+420)/460));
+ h=Math.floor(Math.max(120,h));
+ each([[side,560,'.sidecard'],[topv,420,'.topcard']],function(a){
+  var w=Math.floor(h*a[1]/460),card=document.querySelector(a[2]);
+  a[0].style.width=w+'px';a[0].style.height=h+'px';card.style.width=(w+22)+'px';card.style.flex='none';
+ });
+}
+window.addEventListener('resize',function(){fitKey=null;schedule();});
+window.addEventListener('orientationchange',function(){fitKey=null;schedule();});
+// stray swipes must not pan or bounce the page: only scrollable places (and sliders) get the touchmove
+var passiveOK=false;try{window.addEventListener('x',null,Object.defineProperty({},'passive',{get:function(){passiveOK=true;}}));}catch(e){}
+document.addEventListener('touchmove',function(e){
+ for(var el=e.target;el&&el.nodeType==1;el=el.parentNode){
+  if(el.tagName=='INPUT'||el.tagName=='TEXTAREA'||el.id=='logbox'||(el.tagName=='MAIN'&&el.classList.contains('scroll')))return;
+ }
+ e.preventDefault();
+},passiveOK?{passive:false}:false);
+function setRanges(){
  $('roll').min=cfg.joints[4].min;$('roll').max=cfg.joints[4].max;
  $('grip').min=0;$('grip').max=180; // Full range for 360 servo
 }
+function gripText(v){return v > 95 ? 'OPENING' : (v < 85 ? 'CLOSING' : 'BRAKED');}
 function updateStatus(){
- for(const k of ['pitch','roll']){const e=$(k);if(document.activeElement!==e){e.value=st.tool[k];$(k+'v').textContent=Math.round(st.tool[k])+'°'}}
+ each(['pitch','roll'],function(k){var e=$(k);if(document.activeElement!==e){val(e,st.tool[k]);txt($(k+'v'),Math.round(st.tool[k])+'°');}});
  // Gripper specific label updates
- if(document.activeElement!==$('grip')) {$('grip').value = st.tool.grip;
-   $('gripv').textContent = (st.tool.grip > 95 ? 'OPENING' : (st.tool.grip < 85 ? 'CLOSING' : 'BRAKED'));
+ if(document.activeElement!==$('grip')) {val($('grip'), st.tool.grip);
+   txt($('gripv'), gripText(st.tool.grip));
  }
- 
- $('live').textContent='Live: '+(st.live?'ON':'OFF');$('live').classList.toggle('on',st.live);
- $('hw').textContent=st.hw?(st.engaged?'ESP32 connected':'ESP32 connected · servos OFF (limp) until you press Live'):(st.lost?'USB LOST - reconnecting… (Live off)':'simulation (no ESP32)');$('hw').className='chip '+(st.hw?(st.engaged?'ok':'warn'):(st.lost?'warn':''));
- const w=[];if(st.reach)w.push('out of reach');if(st.limited)w.push('joint limit hit');
- $('warn').style.display=w.length?'':'none';$('warn').textContent=w.join(' · ');$('warn').className='chip warn';
- const nm=['base','shoulder','elbow','wrist'],bad=[];
- st.ranges.forEach((r,i)=>{if(r[1]-r[0]<25)bad.push(`${nm[i]} range is only ${r[1]-r[0]}° (${r[0]}…${r[1]})`)});
- if(st.ranges[2][1]<10)bad.push(`elbow can only bend backwards (${st.ranges[2][0]}…${st.ranges[2][1]}): redo elbow zero/direction`);
- $('calchk').style.display=bad.length?'':'none';$('calchk').textContent=bad.length?'Check calibration → '+bad.join(' · '):'';
- $('rng').textContent='joint ranges (°, 0 = reference pose): '+st.ranges.map((r,i)=>nm[i]+' '+r[0]+'…'+r[1]).join(' · ');$('readout').textContent=`tip x ${st.tool.x.toFixed(0)}  y ${st.tool.y.toFixed(0)}  z ${st.tool.z.toFixed(0)} mm   |   servos ${st.cur.map(v=>v.toFixed(0)).join(' / ')}`;
+
+ txt($('live'),'Live: '+(st.live?'ON':'OFF'));tog($('live'),'on',st.live);
+ txt($('hw'),st.hw?(st.engaged?'ESP32 connected':'ESP32 connected · servos OFF (limp) until you press Live'):(st.lost?'USB LOST - reconnecting… (Live off)':'simulation (no ESP32)'));cls($('hw'),'chip '+(st.hw?(st.engaged?'ok':'warn'):(st.lost?'warn':'')));
+ var w=[];if(st.reach)w.push('out of reach');if(st.limited)w.push('joint limit hit');
+ show($('warn'),w.length);txt($('warn'),w.join(' · '));cls($('warn'),'chip warn');
+ var nm=['base','shoulder','elbow','wrist'],bad=[];
+ st.ranges.forEach(function(r,i){if(r[1]-r[0]<25)bad.push(nm[i]+' range is only '+(r[1]-r[0])+'° ('+r[0]+'…'+r[1]+')');});
+ if(st.ranges[2][1]<10)bad.push('elbow can only bend backwards ('+st.ranges[2][0]+'…'+st.ranges[2][1]+'): redo elbow zero/direction');
+ show($('calchk'),bad.length);txt($('calchk'),bad.length?'Check calibration → '+bad.join(' · '):'');
+ txt($('rng'),'joint ranges (°, 0 = reference pose): '+st.ranges.map(function(r,i){return nm[i]+' '+r[0]+'…'+r[1];}).join(' · '));
+ txt($('readout'),'tip x '+st.tool.x.toFixed(0)+'  y '+st.tool.y.toFixed(0)+'  z '+st.tool.z.toFixed(0)+' mm   |   servos '+st.cur.map(function(v){return v.toFixed(0);}).join(' / '));
 }
 
-$('live').onclick=()=>send({type:'live',on:!(st&&st.live)});$('rlx5').onclick=()=>send({type:'relax',mask:32});$('wake').onclick=()=>send({type:'relax',mask:0});$('rlxa').onclick=()=>send({type:'relax',mask:63});
-$('rest').onclick=()=>send({type:'rest'});$('home').onclick=()=>send({type:'home'});
-$('speed').oninput=e=>{$('speedv').textContent=e.target.value+'°/s';send({type:'speed',dps:+e.target.value})};
-document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
- document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('sel',x==b));
- $('move').style.display=b.dataset.tab=='move'?'':'none';$('cal').style.display=b.dataset.tab=='cal'?'':'none';
- if(b.dataset.tab=='move'){send({type:'unlock',on:false});send({type:'resync'})}else if(wz>=0)send({type:'unlock',on:true});});
+$('live').onclick=function(){send({type:'live',on:!(st&&st.live)});};$('rlx5').onclick=function(){send({type:'relax',mask:32});};$('wake').onclick=function(){send({type:'relax',mask:0});};$('rlxa').onclick=function(){send({type:'relax',mask:63});};
+$('rest').onclick=function(){send({type:'rest'});};$('home').onclick=function(){send({type:'home'});};
+onRange($('speed'),function(e){$('speedv').textContent=e.target.value+'°/s';send({type:'speed',dps:+e.target.value});});
+each(document.querySelectorAll('.tab'),function(b){b.onclick=function(){
+ each(document.querySelectorAll('.tab'),function(x){tog(x,'sel',x==b);});
+ $('move').style.display=b.getAttribute('data-tab')=='move'?'':'none';$('cal').style.display=b.getAttribute('data-tab')=='cal'?'':'none';
+ if(b.getAttribute('data-tab')=='move'){send({type:'unlock',on:false});send({type:'resync'});}else if(wz>=0)send({type:'unlock',on:true});schedule();};});
 
-for(const k of ['pitch','roll'])$(k).oninput=e=>{$(k+'v').textContent=e.target.value+'°';send({type:k,pitch:+e.target.value,angle:+e.target.value})};
+each(['pitch','roll'],function(k){onRange($(k),function(e){$(k+'v').textContent=e.target.value+'°';send({type:k,pitch:+e.target.value,angle:+e.target.value});});});
 
 // --- GRIPPER DEAD-MAN SWITCH LOGIC ---
-const gripSlider = $('grip');
-gripSlider.value = 90; 
-gripSlider.oninput = e => {
-  const val = +e.target.value;
-  $('gripv').textContent = (val > 95 ? 'OPENING' : (val < 85 ? 'CLOSING' : 'BRAKED'));
+var gripSlider = $('grip');
+gripSlider.value = 90;
+onRange(gripSlider, function(e) {
+  var val = +e.target.value;
+  $('gripv').textContent = gripText(val);
   send({type:'grip', angle: val});
-};
+});
 
-const stopGrip = () => {
+function stopGrip() {
   gripSlider.value = 90;
   $('gripv').textContent = 'BRAKED';
   send({type:'grip', angle: 90}); // Active electronic braking
-};
+}
 
-gripSlider.onpointerup = stopGrip;
-gripSlider.onpointercancel = stopGrip;
+// every kind of release, so the brake fires whichever events this browser has (repeats are harmless)
+each(['pointerup','pointercancel','touchend','touchcancel','mouseup'],function(ev){gripSlider.addEventListener(ev,stopGrip);});
 
 
 // ---- throttled drag sending (25 Hz) ----
-let lastSend=0,pending=null,timer=null;
-function flush(){timer=null;if(pending){send(pending);pending=null;lastSend=performance.now()}}
-function sendDrag(m){pending=m;const d=performance.now()-lastSend;if(d>=40)flush();else if(!timer)timer=setTimeout(flush,40-d)}
+var lastSend=0,pending=null,timer=null;
+function flush(){timer=null;if(pending){send(pending);pending=null;lastSend=now();}}
+function sendDrag(m){pending=m;var d=now()-lastSend;if(d>=40)flush();else if(!timer)timer=setTimeout(flush,40-d);}
 
 // ---- drawing ----
-const side=$('side'),topv=$('top'),sc=side.getContext('2d'),tc=topv.getContext('2d');
-const SS=0.9, SO={x:170,y:430}, TS=0.95, TO={x:210,y:420};
-const sp=(r,z)=>[SO.x+r*SS,SO.y-z*SS], tp=(x,y)=>[TO.x-y*TS,TO.y-x*TS];
+var side=$('side'),topv=$('top'),sc=side.getContext('2d'),tc=topv.getContext('2d');
+var SS=0.9, SO={x:170,y:430}, TS=0.95, TO={x:210,y:420};
+function sp(r,z){return [SO.x+r*SS,SO.y-z*SS];}
+function tp(x,y){return [TO.x-y*TS,TO.y-x*TS];}
 // Tool centre point = last point of the chain. fk() appends it after the L3 tip;
 // the two coincide while config.json has no tool offset set.
 function tipOf(pts){return pts[pts.length-1];}
-function line(c,pts,color,w,dash){c.strokeStyle=color;c.lineWidth=w;c.setLineDash(dash||[]);c.lineCap='round';c.lineJoin='round';c.beginPath();pts.forEach((p,i)=>i?c.lineTo(...p):c.moveTo(...p));c.stroke();c.setLineDash([]);}
-function dot(c,p,r,fill,stroke){c.beginPath();c.arc(p[0],p[1],r,0,7);c.fillStyle=fill;c.fill();if(stroke){c.strokeStyle=stroke;c.lineWidth=2;c.stroke()}}
-function diamond(c,p,r,fill,stroke){c.beginPath();c.moveTo(p[0],p[1]-r);c.lineTo(p[0]+r,p[1]);c.lineTo(p[0],p[1]+r);c.lineTo(p[0]-r,p[1]);c.closePath();c.fillStyle=fill;c.fill();c.strokeStyle=stroke;c.lineWidth=2;c.stroke()}
-function sideHandles(){if(!st)return[];const q=st.pl_tgt,P=a=>sp(a[0],a[1]),mid=[(q[3][0]+q[4][0])/2,(q[3][1]+q[4][1])/2];
- return [{n:'tip',px:P(q[4]),rad:16},{n:'dir',px:P(mid),rad:12},{n:'wrist',px:P(q[3]),rad:14},{n:'elbow',px:P(q[2]),rad:14}]}
+function setDash(c,d){if(c.setLineDash)c.setLineDash(d);else if('webkitLineDash' in c)c.webkitLineDash=d;}
+function line(c,pts,color,w,dash){c.strokeStyle=color;c.lineWidth=w;setDash(c,dash||[]);c.lineCap='round';c.lineJoin='round';c.beginPath();pts.forEach(function(p,i){if(i)c.lineTo(p[0],p[1]);else c.moveTo(p[0],p[1]);});c.stroke();setDash(c,[]);}
+function dot(c,p,r,fill,stroke){c.beginPath();c.arc(p[0],p[1],r,0,7);c.fillStyle=fill;c.fill();if(stroke){c.strokeStyle=stroke;c.lineWidth=2;c.stroke();}}
+function diamond(c,p,r,fill,stroke){c.beginPath();c.moveTo(p[0],p[1]-r);c.lineTo(p[0]+r,p[1]);c.lineTo(p[0],p[1]+r);c.lineTo(p[0]-r,p[1]);c.closePath();c.fillStyle=fill;c.fill();c.strokeStyle=stroke;c.lineWidth=2;c.stroke();}
+function sideHandles(){if(!st)return[];var q=st.pl_tgt,P=function(a){return sp(a[0],a[1]);},mid=[(q[3][0]+q[4][0])/2,(q[3][1]+q[4][1])/2];
+ return [{n:'tip',px:P(q[4]),rad:16},{n:'dir',px:P(mid),rad:12},{n:'wrist',px:P(q[3]),rad:14},{n:'elbow',px:P(q[2]),rad:14}];}
+var drawKey=null;
 function draw(){
- if(!cfg)return;const L=cfg.links,R=L.L1+L.L2;
+ if(!cfg)return;
+ var key=st?st.cur.join()+'|'+st.tgt.join()+'|'+st.live:'-';if(key===drawKey)return;drawKey=key;var L=cfg.links,R=L.L1+L.L2;
  sc.clearRect(0,0,560,460);tc.clearRect(0,0,420,460);
  line(sc,[sp(-190,0),sp(450,0)],'#3a4048',2);sc.fillStyle='#8a919b';sc.fillText('SIDE: drag the blue tip, or the elbow / wrist dots, or the diamond (aims the gripper)',10,18);
- sc.beginPath();sc.arc(...sp(0,L.L0),R*SS,0,Math.PI*2);sc.strokeStyle='#2c3138';sc.setLineDash([4,6]);sc.stroke();sc.setLineDash([]);
- tc.fillStyle='#8a919b';tc.fillText('TOP: drag the blue tip (turns the base)',10,18);
- tc.beginPath();tc.arc(TO.x,TO.y,(R+L.L3)*TS,0,Math.PI*2);tc.strokeStyle='#2c3138';tc.setLineDash([4,6]);tc.stroke();tc.setLineDash([]);
+ var o=sp(0,L.L0);sc.beginPath();sc.arc(o[0],o[1],R*SS,0,Math.PI*2);sc.strokeStyle='#2c3138';setDash(sc,[4,6]);sc.stroke();setDash(sc,[]);
+ tc.fillStyle='#8a919b';tc.fillText('TOP: drag the blue tip (turns the base only)',10,18);
+ tc.beginPath();tc.arc(TO.x,TO.y,(R+L.L3)*TS,0,Math.PI*2);tc.strokeStyle='#2c3138';setDash(tc,[4,6]);tc.stroke();setDash(tc,[]);
  if(!st)return;
- const SP=a=>a.map(q=>sp(q[0],q[1])),TP=a=>a.map(p=>tp(p[0],p[1])),col=st.live?'#38c172':'#8a919b';
+ var SP=function(a){return a.map(function(q){return sp(q[0],q[1]);});},TP=function(a){return a.map(function(p){return tp(p[0],p[1]);});},col=st.live?'#38c172':'#8a919b';
  line(sc,SP(st.pl_tgt),'#4a5666',3,[5,5]);line(tc,TP(st.pts_tgt),'#4a5666',3,[5,5]);
  line(sc,SP(st.pl_cur),col,7);line(tc,TP(st.pts_cur),col,7);
- SP(st.pl_cur).forEach(p=>dot(sc,p,5,'#14161a'));TP(st.pts_cur).forEach(p=>dot(tc,p,5,'#14161a'));
- const hs=sideHandles();
- for(const h of hs){if(h.n=='tip')dot(sc,h.px,h.rad,'rgba(78,161,255,.4)','#4ea1ff');else if(h.n=='dir')diamond(sc,h.px,h.rad,'rgba(240,160,48,.45)','#f0a030');else dot(sc,h.px,h.rad,'rgba(255,255,255,.15)','#e6e8eb')}
+ SP(st.pl_cur).forEach(function(p){dot(sc,p,5,'#14161a');});TP(st.pts_cur).forEach(function(p){dot(tc,p,5,'#14161a');});
+ each(sideHandles(),function(h){if(h.n=='tip')dot(sc,h.px,h.rad,'rgba(78,161,255,.4)','#4ea1ff');else if(h.n=='dir')diamond(sc,h.px,h.rad,'rgba(240,160,48,.45)','#f0a030');else dot(sc,h.px,h.rad,'rgba(255,255,255,.15)','#e6e8eb');});
  dot(tc,tp(tipOf(st.pts_tgt)[0],tipOf(st.pts_tgt)[1]),16,'rgba(78,161,255,.4)','#4ea1ff');
 }
-function pos(cv,e){const b=cv.getBoundingClientRect();return[(e.clientX-b.left)*cv.width/b.width,(e.clientY-b.top)*cv.height/b.height]}
-const nrm=a=>((a+180)%360+360)%360-180, D=180/Math.PI;
-let dragSide = null, dragTop = null, liveTip = {x: 0, y: 0, z: 0};
+// canvas pixel under a mouse event / Touch (page coordinates: old Android WebKit gets clientX wrong)
+function pos(cv,e){var b=cv.getBoundingClientRect(),x=e.pageX-(b.left+window.pageXOffset),y=e.pageY-(b.top+window.pageYOffset);return[x*cv.width/b.width,y*cv.height/b.height];}
+var D=180/Math.PI;
+function nrm(a){return ((a+180)%360+360)%360-180;}
+var dragSide = null, dragTop = null, liveTip = {x: 0, y: 0, z: 0};
 
 function sideDrag(n,r,z){
- const L=cfg.links,A=st.ang,q=st.pl_tgt;
+ var L=cfg.links,A=st.ang,q=st.pl_tgt;
  if(n=='tip'){
   // Side view dictates Radius and Height (Z); preserves the Base Yaw
-  const yaw = Math.atan2(liveTip.y, Math.max(0.001, liveTip.x));
-  const rr = Math.max(0, r);
+  var yaw = Math.atan2(liveTip.y, Math.max(0.001, liveTip.x));
+  var rr = Math.max(0, r);
   liveTip.x = rr * Math.cos(yaw);
   liveTip.y = rr * Math.sin(yaw);
   liveTip.z = Math.max(5, z);
   sendDrag({type:'tip', x:liveTip.x, y:liveTip.y, z:liveTip.z, lock:$('lock').checked});
  }
- else if(n=='elbow'){sendDrag({type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)})}                      
- else if(n=='wrist'){const e=q[2];sendDrag({type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)})}  
- else if(n=='dir'){const w=q[3];sendDrag({type:'joints',gamma:nrm((90-A[1]-A[2])-Math.atan2(z-w[1],r-w[0])*D)})} 
+ else if(n=='elbow'){sendDrag({type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)});}
+ else if(n=='wrist'){var e=q[2];sendDrag({type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)});}
+ else if(n=='dir'){var w=q[3];sendDrag({type:'joints',gamma:nrm((90-A[1]-A[2])-Math.atan2(z-w[1],r-w[0])*D)});}
 }
 
 // Side Canvas Touch
-side.onpointerdown=e=>{
- if(!st)return; const p=pos(side,e);
- for(const h of sideHandles()){
-  if(Math.hypot(p[0]-h.px[0],p[1]-h.px[1])<h.rad+10){
-   dragSide={id:e.pointerId, n:h.n, off:[h.px[0]-p[0],h.px[1]-p[1]]};
-   side.setPointerCapture(e.pointerId); break;
+track(side,{
+ down:function(id,e){
+  if(!st)return false; var p=pos(side,e), hs=sideHandles();
+  for(var i=0;i<hs.length;i++){var h=hs[i];
+   if(hyp(p[0]-h.px[0],p[1]-h.px[1])<h.rad+10){dragSide={id:id, n:h.n, off:[h.px[0]-p[0],h.px[1]-p[1]]};return true;}
   }
- }
-};
-side.onpointermove=e=>{
- if(dragSide && dragSide.id === e.pointerId){
-  const p=pos(side,e), q=[p[0]+dragSide.off[0], p[1]+dragSide.off[1]];
-  sideDrag(dragSide.n,(q[0]-SO.x)/SS,(SO.y-q[1])/SS);
- }
-};
-side.onpointerup=side.onpointercancel=e=>{
- if(dragSide && dragSide.id === e.pointerId){ dragSide = null; flush(); }
-};
+  return false;
+ },
+ move:function(id,e){
+  if(!dragSide || dragSide.id !== id)return false;
+  var p=pos(side,e), q=[p[0]+dragSide.off[0], p[1]+dragSide.off[1]];
+  sideDrag(dragSide.n,(q[0]-SO.x)/SS,(SO.y-q[1])/SS);return true;
+ },
+ up:function(id){if(dragSide && dragSide.id === id){ dragSide = null; flush(); }}
+});
 
-// Top Canvas Touch
-topv.onpointerdown=e=>{
- if(!st)return; const p=pos(topv,e), h=tp(tipOf(st.pts_tgt)[0],tipOf(st.pts_tgt)[1]);
- if(Math.hypot(p[0]-h[0],p[1]-h[1])<50){
-  dragTop={id:e.pointerId, off:[h[0]-p[0],h[1]-p[1]]};
-  topv.setPointerCapture(e.pointerId);
- }
-};
-topv.onpointermove=e=>{
- if(dragTop && dragTop.id === e.pointerId){
-  const p0=pos(topv,e), p=[p0[0]+dragTop.off[0], p0[1]+dragTop.off[1]];
-  
-  // 1. Preserve the current reach radius (r) so the arm doesn't extend/retract
-  const curR = Math.hypot(liveTip.x, liveTip.y);
-  const r = curR > 5 ? curR : (st && st.pts_tgt ? Math.hypot(tipOf(st.pts_tgt)[0], tipOf(st.pts_tgt)[1]) : 150);
-  
-  // 2. Derive purely the angular yaw from your finger's position relative to the base
-  const yaw = Math.atan2(TO.x - p[0], Math.max(1, TO.y - p[1]));
-  
-  // 3. Project the existing radius onto the new angle (Z is untouched)
-  liveTip.x = Math.max(0, r * Math.cos(yaw));
-  liveTip.y = r * Math.sin(yaw);
-  
-  sendDrag({type:'tip', x:liveTip.x, y:liveTip.y, z:liveTip.z, lock:$('lock').checked});
- }
-};
-topv.onpointerup=topv.onpointercancel=e=>{
- if(dragTop && dragTop.id === e.pointerId){ dragTop = null; flush(); }
-};
+// Top Canvas Touch: turns the BASE JOINT ONLY. The finger's change in bearing around the base is
+// added to the base angle it had at touch-down; shoulder, elbow and wrist are not sent, so the reach
+// and the height stay exactly as they are wherever the arm points.
+function bearing(p){return Math.atan2(TO.x-p[0],TO.y-p[1])*D;}
+track(topv,{
+ down:function(id,e){
+  if(!st)return false; var p=pos(topv,e), h=tp(tipOf(st.pts_tgt)[0],tipOf(st.pts_tgt)[1]);
+  if(hyp(p[0]-h[0],p[1]-h[1])<50){dragTop={id:id, yaw0:st.ang[0], b0:bearing(p)};return true;}
+  return false;
+ },
+ move:function(id,e){
+  if(!dragTop || dragTop.id !== id)return false;
+  sendDrag({type:'joints', yaw:dragTop.yaw0+nrm(bearing(pos(topv,e))-dragTop.b0)});return true;
+ },
+ up:function(id){if(dragTop && dragTop.id === id){ dragTop = null; flush(); }}
+});
 
 // ---- calibration ----
+var LK=['L0','L1','L2','L3'];
 function buildCal(){
- const t=$('caltable');if(t.dataset.built){updateCalText();return}t.dataset.built=1;
- cfg.joints.forEach((j,i)=>{
-  const tr=document.createElement('tr');
-  tr.innerHTML=`<td style="width:100px">${i}: ${j.name}</td><td><input type="range" min="0" max="180" step="0.5" id="raw${i}"></td>
-  <td style="width:50px" class="mono" id="rv${i}"></td>
-  <td style="white-space:nowrap">${i<4?`<button data-a="setzero" data-i="${i}">Set zero</button> <button data-a="flip" data-i="${i}">Flip</button> `:''}
-  <button data-a="setlim" data-w="min" data-i="${i}">Set min</button> <button data-a="setlim" data-w="max" data-i="${i}">Set max</button></td>
-  <td class="mono" id="ct${i}" style="width:190px"></td>`;t.appendChild(tr);
-  tr.querySelector('input').oninput=e=>send({type:'raw',servo:i,angle:+e.target.value});
-  tr.querySelectorAll('button').forEach(b=>b.onclick=()=>send({type:b.dataset.a,joint:i,which:b.dataset.w}));
+ var t=$('caltable');if(t.getAttribute('data-built')){updateCalText();return;}t.setAttribute('data-built','1');
+ cfg.joints.forEach(function(j,i){
+  var tr=document.createElement('tr');
+  tr.innerHTML='<td style="width:100px">'+i+': '+j.name+'</td><td><input type="range" min="0" max="180" step="0.5" id="raw'+i+'"></td>'+
+  '<td style="width:50px" class="mono" id="rv'+i+'"></td>'+
+  '<td style="white-space:nowrap">'+(i<4?'<button data-a="setzero" data-i="'+i+'">Set zero</button> <button data-a="flip" data-i="'+i+'">Flip</button> ':'')+
+  '<button data-a="setlim" data-w="min" data-i="'+i+'">Set min</button> <button data-a="setlim" data-w="max" data-i="'+i+'">Set max</button></td>'+
+  '<td class="mono" id="ct'+i+'" style="width:190px"></td>';t.appendChild(tr);
+  onRange(tr.querySelector('input'),function(e){send({type:'raw',servo:i,angle:+e.target.value});});
+  each(tr.querySelectorAll('button'),function(b){b.onclick=function(){send({type:b.getAttribute('data-a'),joint:i,which:b.getAttribute('data-w')});};});
  });
- const ld=$('links');['L0','L1','L2','L3'].forEach(k=>{ld.insertAdjacentHTML('beforeend',`<label style="width:auto">${k}</label><input type="number" id="lk${k}">`);});
- ['L0','L1','L2','L3'].forEach(k=>$('lk'+k).onchange=()=>send({type:'links',links:Object.fromEntries(['L0','L1','L2','L3'].map(q=>[q,+$('lk'+q).value]))}));
+ var ld=$('links');each(LK,function(k){ld.insertAdjacentHTML('beforeend','<label style="width:auto">'+k+'</label><input type="number" id="lk'+k+'">');});
+ each(LK,function(k){$('lk'+k).onchange=function(){var links={};each(LK,function(q){links[q]=+$('lk'+q).value;});send({type:'links',links:links});};});
  updateCalText();
 }
-function updateCalText(){wzInfo();cfg.joints.forEach((j,i)=>{$('ct'+i).textContent=(i<4?`zero ${j.zero}  sign ${j.sign>0?'+':'−'}  `:'')+`[${j.min}–${j.max}]`});
- for(const k in cfg.links)if(document.activeElement!==$('lk'+k))$('lk'+k).value=cfg.links[k];}
-function updateCal(){if(!cfg||!st)return;if(wz>=0&&$('wzang')){const s=steps[wz];if(s.j!==undefined)$('wzang').textContent='servo '+st.cur[s.j].toFixed(1)+'°'}cfg.joints.forEach((j,i)=>{const s=$('raw'+i);if(s&&document.activeElement!==s)s.value=st.tgt[i];if($('rv'+i))$('rv'+i).textContent=st.cur[i].toFixed(0)+'°'})}
+function updateCalText(){wzInfo();cfg.joints.forEach(function(j,i){$('ct'+i).textContent=(i<4?'zero '+j.zero+'  sign '+(j.sign>0?'+':'−')+'  ':'')+'['+j.min+'–'+j.max+']';});
+ for(var k in cfg.links)if(document.activeElement!==$('lk'+k))$('lk'+k).value=cfg.links[k];}
+function updateCal(){if(!cfg||!st)return;if(wz>=0&&$('wzang')){var s=steps[wz];if(s.j!==undefined)txt($('wzang'),'servo '+st.cur[s.j].toFixed(1)+'°');}cfg.joints.forEach(function(j,i){var s=$('raw'+i);if(s&&document.activeElement!==s)val(s,st.tgt[i],0.25);if($('rv'+i))txt($('rv'+i),st.cur[i].toFixed(0)+'°');});}
 
 // ---- guided wizard ----
-const linksNode=$('links');
-const REF=['the arm points straight FORWARD (up the screen in the top view)','the upper arm points straight UP (vertical)','the forearm is in a straight line with the upper arm','the gripper plate is in a straight line with the forearm'];
-const DIR=['turns LEFT (anticlockwise seen from above)','leans FORWARD','folds the forearm FORWARD / DOWN','tilts the gripper DOWN'];
-const NAMES=['Base','Shoulder','Elbow','Wrist pitch','Wrist roll'];
-const steps=[{k:'start'}];
-for(let j=0;j<4;j++)steps.push({k:'zero',j},{k:'dir',j},{k:'lim',j});
+var linksNode=$('links');
+var REF=['the arm points straight FORWARD (up the screen in the top view)','the upper arm points straight UP (vertical)','the forearm is in a straight line with the upper arm','the gripper plate is in a straight line with the forearm'];
+var DIR=['turns LEFT (anticlockwise seen from above)','leans FORWARD','folds the forearm FORWARD / DOWN','tilts the gripper DOWN'];
+var NAMES=['Base','Shoulder','Elbow','Wrist pitch','Wrist roll'];
+var steps=[{k:'start'}];
+for(var j=0;j<4;j++)steps.push({k:'zero',j:j},{k:'dir',j:j},{k:'lim',j:j});
 steps.push({k:'lim',j:4},{k:'done'});
-let wz=-1;
-function holdBtn(el,j,dir){let iv=null;const stop=()=>{if(iv){clearInterval(iv);iv=null;send({type:'creep',servo:j,dir:0})}};
- el.onpointerdown=e=>{el.setPointerCapture(e.pointerId);send({type:'creep',servo:j,dir});iv=setInterval(()=>send({type:'creep',servo:j,dir}),100)};
- el.onpointerup=stop;el.onpointercancel=stop;el.onlostpointercapture=stop;}
-function wzInfo(){if(wz<0||!cfg)return;const s=steps[wz],e=$('wzinfo');if(!e||s.j===undefined)return;const J=cfg.joints[s.j];
- e.textContent=(s.j<4?`zero ${J.zero}  sign ${J.sign>0?'+':'−'}  `:'')+`limits ${J.min} – ${J.max}`;}
+var wz=-1;
+function holdBtn(el,j,dir){var iv=null;function stop(){if(iv){clearInterval(iv);iv=null;send({type:'creep',servo:j,dir:0});}}
+ track(el,{down:function(){if(!iv){send({type:'creep',servo:j,dir:dir});iv=setInterval(function(){send({type:'creep',servo:j,dir:dir});},100);}return true;},up:stop});}
+function wzInfo(){if(wz<0||!cfg)return;var s=steps[wz],e=$('wzinfo');if(!e||s.j===undefined)return;var J=cfg.joints[s.j];
+ e.textContent=(s.j<4?'zero '+J.zero+'  sign '+(J.sign>0?'+':'−')+'  ':'')+'limits '+J.min+' – '+J.max;}
 function wzRender(){
- const box=$('wiz');document.querySelector('#cal details').appendChild(linksNode);
+ var box=$('wiz');document.querySelector('#cal details').appendChild(linksNode);
  if(wz<0){box.innerHTML='<h3>Guided calibration</h3><p class="help">Takes about 10 minutes, one joint at a time. Gripper is skipped (360 servos cannot be calibrated). Turn <b>Live ON</b>, keep Speed low (about 20°/s) and keep a hand near the power switch.</p><button id="wzgo" class="on">Start</button>';
-  $('wzgo').onclick=()=>{wz=0;send({type:'unlock',on:true});wzRender()};return}
- const s=steps[wz];let t=`<div class="mono">Step ${wz+1} / ${steps.length}</div>`;
- const nav=`<div class="row"><button id="wzb">← Back</button><button id="wzn" class="on">Next →</button></div>`;
+  $('wzgo').onclick=function(){wz=0;send({type:'unlock',on:true});wzRender();};return;}
+ var s=steps[wz],t='<div class="mono">Step '+(wz+1)+' / '+steps.length+'</div>';
+ var nav='<div class="row"><button id="wzb">← Back</button><button id="wzn" class="on">Next →</button></div>';
  if(s.k=='start')t+='<h3>1. Link lengths</h3><p class="help">Measure with a ruler, in mm: <b>L0</b> table → shoulder axis · <b>L1</b> shoulder → elbow axis · <b>L2</b> elbow → wrist axis · <b>L3</b> wrist axis → gripper tip.</p><div id="wzlinks"></div><button id="wzlive">Turn Live ON</button>';
- if(s.k=='zero')t+=`<h3>${NAMES[s.j]}: set zero</h3><p class="help">Nudge until <b>${REF[s.j]}</b>, then press Set zero. <b>+</b> moves the joint in its positive direction (${DIR[s.j]}), and Flip reverses that.</p>
-  <div class="row"><button data-d="-5">−5°</button><button data-d="-1">−1°</button><button data-d="1">+1°</button><button data-d="5">+5°</button><span class="mono" id="wzang" style="width:auto"></span></div>
-  <div class="row"><button id="wzzero" class="on">Set zero here</button><span class="mono" id="wzinfo" style="width:auto"></span></div>`;
- if(s.k=='dir')t+=`<h3>${NAMES[s.j]}: check direction</h3><p class="help">Press <b>Go to +10°</b> (it moves from zero). The joint should <b>${DIR[s.j]}</b>. If it goes the other way, press Flip, then press Go to +10° again.</p>
-  <div class="row"><button data-jp="10">Go to +10°</button><button data-jp="0">Back to 0°</button><button id="wzok">✔ Correct</button><button id="wzflip">✘ Wrong way: Flip</button></div><div class="mono"><span id="wzang"></span> &nbsp; <span id="wzinfo"></span></div>`;
- if(s.k=='lim')t+=`<h3>${NAMES[s.j]}: find limits</h3><p class="help"><b>Hold</b> a button: the joint creeps slowly toward that end. <b>Let go about 1 cm before anything touches</b> or the moment a cable pulls tight. It backs off 8° by itself and saves the limit. Repeat to redo.</p>
-  <div class="row"><button id="wzmin" style="padding:16px 22px">Hold: find MIN</button><button id="wzmax" style="padding:16px 22px">Hold: find MAX</button><button id="wzmid">Centre (90°)</button></div><div class="mono" id="wzinfo"></div>`;
+ if(s.k=='zero')t+='<h3>'+NAMES[s.j]+': set zero</h3><p class="help">Nudge until <b>'+REF[s.j]+'</b>, then press Set zero. <b>+</b> moves the joint in its positive direction ('+DIR[s.j]+'), and Flip reverses that.</p>'+
+  '<div class="row"><button data-d="-5">−5°</button><button data-d="-1">−1°</button><button data-d="1">+1°</button><button data-d="5">+5°</button><span class="mono" id="wzang" style="width:auto"></span></div>'+
+  '<div class="row"><button id="wzzero" class="on">Set zero here</button><span class="mono" id="wzinfo" style="width:auto"></span></div>';
+ if(s.k=='dir')t+='<h3>'+NAMES[s.j]+': check direction</h3><p class="help">Press <b>Go to +10°</b> (it moves from zero). The joint should <b>'+DIR[s.j]+'</b>. If it goes the other way, press Flip, then press Go to +10° again.</p>'+
+  '<div class="row"><button data-jp="10">Go to +10°</button><button data-jp="0">Back to 0°</button><button id="wzok">✔ Correct</button><button id="wzflip">✘ Wrong way: Flip</button></div><div class="mono"><span id="wzang"></span> &nbsp; <span id="wzinfo"></span></div>';
+ if(s.k=='lim')t+='<h3>'+NAMES[s.j]+': find limits</h3><p class="help"><b>Hold</b> a button: the joint creeps slowly toward that end. <b>Let go about 1 cm before anything touches</b> or the moment a cable pulls tight. It backs off 8° by itself and saves the limit. Repeat to redo.</p>'+
+  '<div class="row"><button id="wzmin" style="padding:16px 22px">Hold: find MIN</button><button id="wzmax" style="padding:16px 22px">Hold: find MAX</button><button id="wzmid">Centre (90°)</button></div><div class="mono" id="wzinfo"></div>';
  if(s.k=='done')t+='<h3>Done</h3><p class="help">Limits are now enforced everywhere, including in the firmware. Press Finish, then test with the handle on the Move tab.</p><button id="wzfin" class="on">Finish</button>';
  box.innerHTML=t+nav;
- if(s.k=='start'){$('wzlinks').appendChild(linksNode);$('wzlive').onclick=()=>send({type:'live',on:true})}
- box.querySelectorAll('button[data-d]').forEach(b=>b.onclick=()=>send({type:'nudge',servo:s.j,delta:+b.dataset.d,joint:s.j<4}));
- box.querySelectorAll('button[data-jp]').forEach(b=>b.onclick=()=>send({type:'jointpos',joint:s.j,angle:+b.dataset.jp}));
- if(s.k=='zero'){$('wzzero').onclick=()=>send({type:'setzero',joint:s.j});}
- if(s.k=='dir'){$('wzok').onclick=()=>{wz++;wzRender()};$('wzflip').onclick=()=>{send({type:'flip',joint:s.j});$('wzinfo').textContent='Flipped. Press Back to 0°, then Go to +10° again: it should now move the other way.'}}
- if(s.k=='lim'){holdBtn($('wzmin'),s.j,-1);holdBtn($('wzmax'),s.j,1);$('wzmid').onclick=()=>send({type:'raw',servo:s.j,angle:90})}
- if(s.k=='done'){$('wzfin').onclick=()=>{send({type:'unlock',on:false});wz=-1;wzRender();document.querySelector('.tab[data-tab=move]').click()};$('wzb').onclick=()=>{if(wz>0){wz--;wzRender()}else{send({type:'unlock',on:false});wz=-1;wzRender()}};}
- const n=$('wzn');if(s.k=='done')n.style.display='none';else n.onclick=()=>{wz++;wzRender()};
+ if(s.k=='start'){$('wzlinks').appendChild(linksNode);$('wzlive').onclick=function(){send({type:'live',on:true});};}
+ each(box.querySelectorAll('button[data-d]'),function(b){b.onclick=function(){send({type:'nudge',servo:s.j,delta:+b.getAttribute('data-d'),joint:s.j<4});};});
+ each(box.querySelectorAll('button[data-jp]'),function(b){b.onclick=function(){send({type:'jointpos',joint:s.j,angle:+b.getAttribute('data-jp')});};});
+ if(s.k=='zero'){$('wzzero').onclick=function(){send({type:'setzero',joint:s.j});};}
+ if(s.k=='dir'){$('wzok').onclick=function(){wz++;wzRender();};$('wzflip').onclick=function(){send({type:'flip',joint:s.j});$('wzinfo').textContent='Flipped. Press Back to 0°, then Go to +10° again: it should now move the other way.';};}
+ if(s.k=='lim'){holdBtn($('wzmin'),s.j,-1);holdBtn($('wzmax'),s.j,1);$('wzmid').onclick=function(){send({type:'raw',servo:s.j,angle:90});};}
+ if(s.k=='done'){$('wzfin').onclick=function(){send({type:'unlock',on:false});wz=-1;wzRender();document.querySelector('.tab[data-tab=move]').click();};$('wzb').onclick=function(){if(wz>0){wz--;wzRender();}else{send({type:'unlock',on:false});wz=-1;wzRender();}};}
+ var n=$('wzn');if(s.k=='done')n.style.display='none';else n.onclick=function(){wz++;wzRender();};
  wzInfo();
 }
 wzRender();
-connect();
+// after cam_panel.js (injected after this script) has added its listener, so it sees the initial cfg and log replay
+document.addEventListener('DOMContentLoaded',connect);
 </script></body></html>

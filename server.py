@@ -405,6 +405,14 @@ async def broadcast(msg):
         try: await ws.send_json(msg)
         except Exception: S.clients.discard(ws)
 
+def r1(v):
+    """Round every float to 0.1 (mm or degrees): halves the JSON a slow browser has to parse,
+    and makes an idle arm's states compare equal so poll clients can skip them."""
+    if isinstance(v, float): return round(v, 1)
+    if isinstance(v, (list, tuple)): return [r1(x) for x in v]
+    if isinstance(v, dict): return {k: r1(x) for k, x in v.items()}
+    return v
+
 async def control_loop():
     last = time.time(); last_sent = None; tick = 0
     while True:
@@ -440,14 +448,15 @@ async def control_loop():
             tip = fk(S.cur, S.cfg)[0][-1]; V.tip_cur = tip; V.tip_tgt = fk(S.tgt, S.cfg)[0][-1]
             R = V.roll; V.jaw_deg = (math.degrees(math.atan2(tip[1], tip[0])) + R["sign"] * (S.cur[4] - R["zero"])) % 180.0
         tick += 1
+        if tick % 50 == 0: reap_polls()
         while NEWLOGS: await broadcast(NEWLOGS.pop(0))
         if tick % 2 == 0 and S.clients:
-            await broadcast({"type": "state", "cur": S.cur, "tgt": S.tgt,
+            await broadcast(r1({"type": "state", "cur": S.cur, "tgt": S.tgt,
                              "pts_cur": fk(S.cur, S.cfg)[0], "pts_tgt": fk(S.tgt, S.cfg)[0],
                              "pl_cur": fk_planar(S.cur, S.cfg), "pl_tgt": fk_planar(S.tgt, S.cfg),
                              "ang": joint_angles(S.tgt, S.cfg), "ranges": [[round(a), round(b)] for a, b in joint_ranges(S.cfg)], "tool": tool_state(),
                              "live": S.live, "speed": S.speed, "reach": S.reach, "limited": S.limited,
-                             "hw": S.ser is not None, "engaged": S.engaged, "lost": S.ser is None and S.port is not None})
+                             "hw": S.ser is not None, "engaged": S.engaged, "lost": S.ser is None and S.port is not None}))
         if tick % 10 == 0 and S.clients and V is not None:
             st = V.status(); st["busy"] = bool(S.pick_task and not S.pick_task.done())
             await broadcast(st)
@@ -465,11 +474,13 @@ async def handle(ws, m):
                  pitch=m.get("pitch"), who="tip", verbose=bool(m.get("log")))
 
     elif t == "joints":
-        J = S.cfg["joints"]; ang = joint_angles(S.tgt, S.cfg); lim = False
+        # Only the named joints move; the others keep their exact servo value, so turning the base
+        # (top-view drag sends yaw alone) cannot change reach or height. Inverse of joint_angles().
+        J = S.cfg["joints"]; lim = False
         for i, k in enumerate(("yaw", "alpha", "beta", "gamma")):
-            if k in m: ang[i] = float(m[k])
-        for i in range(4):
-            v = J[i]["zero"] + J[i]["sign"] * ang[i]; c = clamp(v, J[i]["min"], J[i]["max"])
+            if k not in m: continue
+            g = J[i].get("gain", 1.0) or 1.0
+            v = J[i]["zero"] + J[i]["sign"] * float(m[k]) / g; c = clamp(v, J[i]["min"], J[i]["max"])
             lim |= abs(c - v) > 1e-6; S.tgt[i] = c
         S.limited = lim; S.reach = False
 
@@ -608,22 +619,80 @@ async def handle(ws, m):
         r = world_to_servo_roll(float(m["angle"]), tip_azimuth()); S.tgt[4] = r
         log(f"jaws -> close along {float(m['angle']):.0f} deg (table), arm azimuth {tip_azimuth():.0f} -> roll servo {r:.0f}")
 
+def client_gone(c):
+    S.clients.discard(c)
+    if not S.clients: S.unlock = False; S.creep = None; push_limits()
+
 async def ws_handler(req):
     ws = web.WebSocketResponse(); await ws.prepare(req); S.clients.add(ws)
+    await ws.send_json({"type": "hello"})   # the log replay follows: the page drops what it already shows
     await ws.send_json({"type": "cfg", "cfg": S.cfg}); await ws.send_json(tool_from_tgt())
     for e in list(LOGQ): await ws.send_json(e)
     async for msg in ws:
         if msg.type == WSMsgType.TEXT:
             try: await handle(ws, json.loads(msg.data))
             except Exception as e: log(f"bad message {msg.data[:80]}: {e}", "err")
-    S.clients.discard(ws)
-    if not S.clients: S.unlock = False; S.creep = None; push_limits()
+    client_gone(ws)
     return ws
+
+# ---------- HTTP long-poll transport ----------
+# For browsers without WebSocket (e.g. the Android 4.2 WebView on a Galaxy Tab 3 Lite). A poll
+# client sits in S.clients next to the websockets, so broadcast() and handle() treat both alike.
+POLL_WAIT, POLL_TIMEOUT = 5.0, 12.0
+POLL = {}
+
+class PollClient:
+    def __init__(self):
+        self.q = collections.deque(maxlen=1000); self.ev = asyncio.Event(); self.seen = time.time(); self.last = {}
+    def push(self, msg):
+        t = msg.get("type")
+        if t in ("state", "vision"):   # snapshots: a slow client only needs the newest, changed one
+            snap = json.dumps(msg, default=str)   # a string: msg may hold lists that are later mutated in place
+            if self.last.get(t) == snap: return   # unchanged: the long poll keeps waiting, nothing to re-render
+            self.last[t] = snap
+            for old in [m for m in self.q if m.get("type") == t]: self.q.remove(old)
+        self.q.append(msg); self.ev.set()
+    async def send_json(self, msg): self.push(msg)
+
+def poll_client(req):
+    cid = req.query.get("id", "")[:40]
+    c = POLL.get(cid)
+    if c is None:
+        c = POLL[cid] = PollClient(); S.clients.add(c)
+        c.push({"type": "hello"}); c.push({"type": "cfg", "cfg": S.cfg}); c.push(tool_from_tgt())
+        for e in list(LOGQ): c.push(e)
+    c.seen = time.time()
+    return c
+
+async def poll_handler(req):
+    c = poll_client(req)
+    if not c.q:
+        c.ev.clear()
+        try: await asyncio.wait_for(c.ev.wait(), POLL_WAIT)
+        except asyncio.TimeoutError: pass
+    out = list(c.q); c.q.clear(); c.seen = time.time()
+    return web.json_response(out, headers={"Cache-Control": "no-store"})
+
+async def send_handler(req):
+    c = poll_client(req); body = await req.text()
+    try: msgs = json.loads(body)
+    except ValueError: return web.Response(status=400, text="bad json")
+    for m in (msgs if isinstance(msgs, list) else [msgs]):
+        try: await handle(c, m)
+        except Exception as e: log(f"bad message {json.dumps(m)[:80]}: {e}", "err")
+    return web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
+
+def reap_polls():
+    now = time.time()
+    for cid, c in list(POLL.items()):
+        if now - c.seen > POLL_TIMEOUT: del POLL[cid]; client_gone(c)
+
+NOCACHE = {"Cache-Control": "no-cache"}   # a kiosk browser that is never restarted would otherwise keep stale UI code
 
 async def index(req):
     html = (HERE / "index.html").read_text(encoding="utf-8")
     html = html.replace("</body>", '<script src="/cam_panel.js"></script></body>')
-    return web.Response(text=html, content_type="text/html")
+    return web.Response(text=html, content_type="text/html", headers=NOCACHE)
 
 async def video(req):
     resp = web.StreamResponse(headers={"Content-Type": "multipart/x-mixed-replace; boundary=frame", "Cache-Control": "no-cache"})
@@ -637,6 +706,11 @@ async def video(req):
     except Exception:
         pass
     return resp
+
+async def frame(req):
+    # single JPEG, for browsers that cannot show the multipart MJPEG stream in an <img>
+    if V is None or V.jpg is None: return web.Response(status=503, text="no frame")
+    return web.Response(body=V.jpg, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 def connect_serial(port):
     ser = serial.Serial(port, 115200, timeout=0.2)
@@ -684,9 +758,12 @@ def main():
     S.tool = tool_from_tgt()
     app = web.Application()
     app.router.add_get("/", index)
-    app.router.add_get("/cam_panel.js", lambda r: web.FileResponse(HERE / "cam_panel.js"))
+    app.router.add_get("/cam_panel.js", lambda r: web.FileResponse(HERE / "cam_panel.js", headers=NOCACHE))
     app.router.add_get("/video", video)
+    app.router.add_get("/frame.jpg", frame)
     app.router.add_get("/ws", ws_handler)
+    app.router.add_get("/poll", poll_handler)
+    app.router.add_post("/send", send_handler)
     async def start(app):
         app["loop"] = asyncio.create_task(control_loop())
         if S.port: app["rc"] = asyncio.create_task(reconnect_loop())
