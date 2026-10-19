@@ -332,6 +332,100 @@ def test_joint_angles_still_reports_four_arm_joints():
     assert len(S.joint_angles([90.0] * 6, cfg)) == 4
 
 
+# ------------------------------------------------- tape measurements (non-FK ground truth)
+
+# Tudor's hand measurements, 2026-10-19. The only numbers in this project that do not come
+# from the arm itself.
+TAPE = {"0-1": 392.0, "0-2": 152.0, "0-3": 420.0, "1-2": 436.0, "1-3": 174.0, "2-3": 401.0}
+
+
+def test_shape_from_distances_round_trips_a_known_rectangle():
+    truth = {0: np.array([0.0, 0.0]), 1: np.array([400.0, 0.0]),
+             2: np.array([0.0, 160.0]), 3: np.array([400.0, 160.0])}
+    tape = {f"{i}-{j}": float(np.linalg.norm(truth[i] - truth[j]))
+            for i in range(4) for j in range(i + 1, 4)}
+    got, closure = V.shape_from_distances(tape, [0, 1, 2, 3])
+    assert closure < 1e-6, f"closure {closure}"
+    for i in range(4):
+        for j in range(i + 1, 4):
+            assert abs(np.linalg.norm(got[i] - got[j]) - tape[f"{i}-{j}"]) < 1e-6
+
+
+def test_shape_from_distances_reports_closure_error_on_inconsistent_tape():
+    bad = dict(TAPE)
+    bad["2-3"] = 300.0                      # 100 mm off what the other five imply
+    _, closure = V.shape_from_distances(bad, [0, 1, 2, 3])
+    assert closure > 50.0, f"inconsistent tape should show a big closure error, got {closure:.1f}"
+
+
+def test_real_tape_is_self_consistent():
+    """The six measurements must close as a planar quadrilateral, or they are untrustworthy."""
+    _, closure = V.shape_from_distances(TAPE, [0, 1, 2, 3])
+    assert closure < 5.0, f"tape closes to {closure:.1f} mm - re-measure before trusting it"
+
+
+def test_shape_from_distances_rejects_a_missing_pair():
+    short = {k: v for k, v in TAPE.items() if k != "1-3"}
+    try:
+        V.shape_from_distances(short, [0, 1, 2, 3])
+    except ValueError as e:
+        assert "1-3" in str(e)
+    else:
+        raise AssertionError("expected a ValueError naming the missing pair")
+
+
+def test_tape_check_catches_the_fk_shape_distortion():
+    """The stored FK model really does disagree with the tape - this pins the magnitude."""
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    vis.tape = dict(TAPE)
+    chk = vis.tape_check()
+    assert chk is not None and len(chk["rows"]) == 6
+    assert not chk["ok"], "expected the FK-derived model to fail the tape check"
+    assert chk["worst"] > 50.0, f"worst disagreement only {chk['worst']} mm"
+
+
+def test_tape_check_returns_none_without_tape():
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    vis.tape = {}
+    assert vis.tape_check() is None
+
+
+def test_markers_from_tape_produces_a_shape_correct_model():
+    """The whole point: the rebuilt model must match the tape, not the arm's distortion."""
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    vis.tape = dict(TAPE)
+    assert not vis.tape_check()["ok"], "precondition: the current model fails the tape"
+
+    out, info = vis.markers_from_tape(apply=False)
+    assert out is not None, info
+    assert vis.tape_check()["worst"] > 50.0, "apply=False must not modify the stored model"
+
+    vis.markers = out
+    chk = vis.tape_check()
+    assert chk["ok"], f"rebuilt model still disagrees with the tape: {chk}"
+    assert chk["worst"] < 2.0, f"worst {chk['worst']} mm"
+
+
+def test_markers_from_tape_keeps_the_layout_the_right_way_round():
+    """A rigid fit cannot undo a mirror, so both reflections are tried. Markers 0 and 2 are
+    on the robot's left (+Y) and 1 and 3 on its right; that must survive the rebuild."""
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    vis.tape = dict(TAPE)
+    out, _ = vis.markers_from_tape(apply=False)
+    assert out[0][1] > 0 and out[2][1] > 0, f"0 and 2 should be +Y (robot left), got {out}"
+    assert out[1][1] < 0 and out[3][1] < 0, f"1 and 3 should be -Y (robot right), got {out}"
+    assert out[0][0] < out[2][0], "marker 0 is nearer the base than marker 2"
+    assert out[1][0] < out[3][0], "marker 1 is nearer the base than marker 3"
+
+
+def test_markers_from_tape_reports_the_fk_residual():
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    vis.tape = dict(TAPE)
+    _, info = vis.markers_from_tape(apply=False)
+    assert "RMS residual" in info
+    assert "forward kinematics is distorted" in info,         "a 38 mm RMS placement residual must be called out, not buried"
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():

@@ -60,7 +60,8 @@
     <div class="card"><h4>Marker calibration (measure with the arm)</h4>
       <p class="help">Do this once after the base is fixed. Live ON, then jog the tip onto the <b>centre</b> of a marker and press Record. 4 markers is best; 2 far-apart markers also works (the rest are deduced). Record at the same tool pitch you pick with.</p>
       <div id="cmk"></div>
-      <div class="row wrap"><button id="cmapply" class="on">Apply measured markers</button><button id="cmreset">Reset to old values</button></div>
+      <div class="row wrap"><button id="cmapply" class="on">Apply measured markers</button><button id="cmtape">Rebuild from tape</button><button id="cmreset">Reset to old values</button></div>
+      <div class="mono" id="cmtapechk" style="white-space:pre-wrap"></div>
       <div class="mono" id="cmfit" style="white-space:pre-wrap"></div></div>
     <div class="card"><h4>Wrist roll calibration</h4>
       <p class="help">1. Turn the roll slider until the jaws close along the arm, press <b>Set zero</b>. 2. Test: type a table angle (0 = along +X) and press Rotate jaws. The orange line on the video should match the real jaws; if the wrist turns the wrong way press Flip.</p>
@@ -105,6 +106,7 @@
   $('cmk').onclick = e => { const b = e.target.closest('button'); if (b) send({ type: 'marker_record', id: +b.dataset.m }); };
   $('cmapply').onclick = () => send({ type: 'marker_apply' });
   $('cmreset').onclick = () => { if (confirm('Go back to the old hand-measured marker values?')) send({ type: 'marker_reset' }); };
+  $('cmtape').onclick = () => { if (confirm('Rebuild the marker model from the tape measurements?\n\nThe shape comes from the tape; the placement is fitted onto the arm-measured points.')) send({ type: 'marker_tape' }); };
   $('croll').oninput = e => { $('crollv').textContent = e.target.value; send({ type: 'roll', angle: +e.target.value }); };
   $('crz').onclick = () => send({ type: 'roll_zero' });
   $('crf').onclick = () => send({ type: 'roll_flip' });
@@ -144,6 +146,7 @@
       V.warn.forEach(x => w.appendChild(chip('warn', x)));
       if (!V.pose) w.appendChild(chip('warn', 'Camera pose not found: all 4 ArUco markers must be visible.'));
       if (!V.measured) w.appendChild(chip('warn', 'Marker positions are still the old hand-measured values. Use "Marker calibration" after moving the base.'));
+      if (V.tape_check && !V.tape_check.ok) w.appendChild(chip('err', `Marker model fails the tape check by ${V.tape_check.worst.toFixed(0)} mm. This is a SHAPE error - solvePnP will absorb part of it as camera tilt and every table coordinate will be wrong. Rebuild from tape.`));
       // Pose health decides whether picking is allowed at all, so it leads.
       if (V.pose) w.appendChild(chip(V.healthy ? 'ok' : 'err', (V.healthy ? 'Pose OK - ' : 'POSE UNRELIABLE - ') + V.health));
       if (V.rejects) w.appendChild(chip('warn', `${V.rejects} pose solves rejected in a row - the pose on screen is stale. Check the log for why.`));
@@ -157,12 +160,10 @@
     // being large (wrong marker coordinates or wrong intrinsics).
     const cal = V.calib && V.calib.res ? `calib ${V.calib.res.join('x')}${V.calib.rms != null ? ` rms ${V.calib.rms.toFixed(2)}px` : ''}` : 'calib unknown';
     $('cstat').textContent =
-      `${V.res.join('x')}  ${V.fps} fps  ${cal}  markers seen: ${V.seen.join(', ') || 'none'}
-` +
+      `${V.res.join('x')}  ${V.fps} fps  ${cal}  markers seen: ${V.seen.join(', ') || 'none'}\n` +
       `table plane z = ${V.plane[0]}x + ${V.plane[1]}y + ${V.plane[2]}` +
       (V.cam_pos ? `   camera at X${V.cam_pos[0]} Y${V.cam_pos[1]} Z${V.cam_pos[2]}` : '') +
-      (V.diag ? `
-${V.diag}` : '');
+      (V.diag ? `\n${V.diag}` : '');
     cam.querySelectorAll('input[data-s]').forEach(c => c.checked = !!V.settings[c.dataset.s]);
     $('clock').textContent = V.locked ? 'Unlock pose' : 'Lock pose';
     if (idle('cdet')) $('cdet').checked = V.detect;
@@ -176,6 +177,14 @@ ${V.diag}` : '');
       $('cm' + i).textContent = (t ? `measured ${t.slice(0, 3).join(', ')}${pose}` : `stored ${m.join(', ')}`)
         + (e != null ? `   ${e.toFixed(1)} px` : '');
     });
+    const tc = V.tape_check;
+    if (!tc) {
+      $('cmtapechk').textContent = 'No tape measurements in vision.json. Measuring the six distances between marker centres by hand is the only check on the arm that does not use the arm.';
+    } else {
+      $('cmtapechk').textContent = 'tape vs model (shape only - independent of where the model sits)\n'
+        + tc.rows.map(r => `  ${r.pair}   tape ${r.tape.toFixed(0).padStart(5)} mm   model ${r.model.toFixed(1).padStart(6)} mm   ${r.diff > 0 ? '+' : ''}${r.diff.toFixed(1)}`).join('\n')
+        + `\n  worst ${tc.worst.toFixed(1)} mm  ${tc.ok ? '- OK' : '- SHAPE ERROR, no trim can fix this'}`;
+    }
     $('cmfit').textContent = V.fit_info;
     $('crinfo').textContent = `roll zero = servo ${V.roll.zero}   servo up turns jaws ${V.roll.sign > 0 ? 'CCW' : 'CW'} (from above)` + (V.jaw != null ? `   jaws now close along ${V.jaw.toFixed(0)}° (table)` : '');
     $('cset').querySelectorAll('input').forEach(i => { if (document.activeElement !== i) { const v = V.settings[i.dataset.k]; i.value = v == null ? '' : v; } });

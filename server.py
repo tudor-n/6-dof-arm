@@ -527,7 +527,8 @@ async def handle(ws, m):
         move_tip(tip["x"] + float(m.get("dx", 0)), tip["y"] + float(m.get("dy", 0)), tip["z"] + float(m.get("dz", 0)),
                  lock=True, who="jog")
     elif V is None and t in ("cam_click", "goto_click", "pick_click", "pick_detected", "vset", "detect", "pose_lock",
-                             "marker_record", "marker_apply", "marker_reset", "roll_zero", "roll_flip", "jaws"):
+                             "marker_record", "marker_apply", "marker_reset", "marker_tape",
+                             "roll_zero", "roll_flip", "jaws"):
         log("Vision is not running (camera files missing, --no-camera, or OpenCV not installed).", "err")
     elif t == "cam_click":
         r = V.click_at(float(m["u"]), float(m["v"]))
@@ -569,6 +570,14 @@ async def handle(ws, m):
     elif t == "marker_record": record_marker(int(m["id"]))
     elif t == "marker_apply":
         ok, info = V.apply_touched(); log(("Markers updated. " if ok else "") + info, "ok" if ok else "err")
+    elif t == "marker_tape":
+        out, info = V.markers_from_tape(apply=True)
+        if out is None:
+            log(f"Rebuild from tape failed: {info}", "err")
+        else:
+            log(f"Markers rebuilt from the tape: {info}", "ok")
+            log("the model now has the measured SHAPE; its placement still comes from the arm, "
+                "so a residual here means forward kinematics needs re-measuring", "info")
     elif t == "marker_reset": V.reset_markers(); log("Markers reset to the old hand-measured defaults.", "warn")
     elif t == "roll_zero":
         V.roll["zero"] = round(S.cur[4], 1); V.save(); log(f"Roll zero set: servo {V.roll['zero']} = jaws close along the arm")

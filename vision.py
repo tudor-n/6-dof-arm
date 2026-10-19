@@ -2,7 +2,7 @@
 Runs in background threads inside server.py. Everything it knows is published through status().
 Needs: pip install opencv-contrib-python numpy ultralytics   (ultralytics only if you use Detect)
 """
-import json, math, os, threading, time
+import itertools, json, math, os, threading, time
 from collections import deque
 from pathlib import Path
 import cv2, numpy as np
@@ -20,6 +20,13 @@ DEFAULT_SETTINGS = {
     "drop_x": 100.0, "drop_y": 200.0, "drop_z": 180.0,
     "show_grid": True, "show_tip": True, "show_markers": True,
 }
+# Hand-measured distances between marker centres, "<lo>-<hi>" -> mm. This is the only
+# ground truth in the system that does not come from the arm itself, so it is what catches
+# a forward-kinematics error - everything else is FK-derived and therefore self-consistent
+# even when wrong. Measure all six pairs for four markers.
+DEFAULT_TAPE = {}
+DEFAULT_ARUCO_MM = 0.0      # black-square edge length, for the future 16-corner pose
+TAPE_WARN_MM = 10.0         # shape disagreement above this is reported loudly
 DEFAULT_ROLL = {"zero": 90.0, "sign": 1}   # servo value where the jaws close along the arm; +1 = servo up turns jaws CCW from above
 DISP_W = 960
 
@@ -27,6 +34,47 @@ MIN_CAM_HEIGHT_MM = 100.0    # a solve putting the camera lower than this above 
                              # the mirrored branch of the coplanar-PnP ambiguity - reject it
 MAX_SOLVE_REPROJ_PX = 4.0    # per-frame solves worse than this never enter the average
 MAX_POSE_REPROJ_PX = 3.0     # worst-marker error above this means the pose is not trustworthy
+
+
+def shape_from_distances(tape, ids):
+    """Reconstruct marker XY from pairwise distances alone, up to placement and reflection.
+
+    Puts ids[0] at the origin and ids[1] on +x, then trilaterates the other two. Each has a
+    two-fold choice of side, so all four combinations are tried and the one whose remaining
+    pair distance best matches the tape is kept. Returns (points, closure_error_mm); the
+    closure error is how self-consistent the six measurements are, which is a direct check
+    on the measuring rather than on the arm.
+    """
+    a, b, c, d = ids
+
+    def g(i, j):
+        v = tape.get(f"{min(i, j)}-{max(i, j)}")
+        if v is None:
+            raise ValueError(f"no tape measurement for pair {min(i, j)}-{max(i, j)}")
+        return float(v)
+
+    if g(a, b) <= 0:
+        raise ValueError("tape distances must be positive")
+    best = None
+    for signs in itertools.product((1.0, -1.0), repeat=2):
+        P = {a: np.zeros(2), b: np.array([g(a, b), 0.0])}
+        ok = True
+        for k, sg in zip((c, d), signs):
+            d0, d1 = g(a, k), g(b, k)
+            x = (d0 * d0 - d1 * d1 + P[b][0] ** 2) / (2 * P[b][0])
+            h2 = d0 * d0 - x * x
+            if h2 < -1.0:                       # the triangle does not close at all
+                ok = False
+                break
+            P[k] = np.array([x, sg * math.sqrt(max(0.0, h2))])
+        if not ok:
+            continue
+        err = abs(float(np.linalg.norm(P[c] - P[d])) - g(c, d))
+        if best is None or err < best[0]:
+            best = (err, P)
+    if best is None:
+        raise ValueError("these tape distances do not describe a planar quadrilateral")
+    return best[1], best[0]
 
 
 def fit_rigid_2d(old, new):
@@ -72,6 +120,8 @@ class Vision:
         self.touched = {}
         self.s = dict(DEFAULT_SETTINGS)
         self.roll = dict(DEFAULT_ROLL)
+        self.tape = dict(DEFAULT_TAPE)
+        self.aruco_mm = DEFAULT_ARUCO_MM
         self.fit_info = ""
         self._load()
         self._fit_plane()
@@ -122,6 +172,8 @@ class Vision:
             self.measured = bool(d.get("measured", False))
             self.s.update({k: v for k, v in d.get("settings", {}).items() if k in DEFAULT_SETTINGS})
             self.roll.update(d.get("roll", {}))
+            self.tape = {str(k): float(v) for k, v in (d.get("tape") or {}).items()}
+            self.aruco_mm = float(d.get("aruco_mm", DEFAULT_ARUCO_MM))
         except FileNotFoundError:
             pass
         except Exception as e:
@@ -129,7 +181,8 @@ class Vision:
 
     def save(self):
         self.file.write_text(json.dumps({"markers": self.markers, "touched": self.touched, "measured": self.measured,
-                                         "settings": self.s, "roll": self.roll}, indent=2))
+                                         "settings": self.s, "roll": self.roll, "tape": self.tape,
+                                         "aruco_mm": self.aruco_mm}, indent=2))
 
     def set_setting(self, key, val):
         if key not in DEFAULT_SETTINGS: return
@@ -200,6 +253,85 @@ class Vision:
         self._fit_plane(); self.hist.clear(); self.rvec = self.tvec = None
         self.fit_info = " | ".join(info); self.save()
         return True, self.fit_info
+
+    # ---------- tape measurements: the only non-FK ground truth ----------
+    def tape_check(self):
+        """Compare the stored marker model's SHAPE against the hand-measured distances.
+
+        Distances are invariant under rotation and translation, so this isolates shape error
+        from placement error. A shape disagreement cannot be fixed by trims or by moving the
+        model - it means the measurement that produced the model is distorted.
+        """
+        if not self.tape:
+            return None
+        rows, worst = [], 0.0
+        for key in sorted(self.tape):
+            try:
+                i, j = (int(v) for v in key.split("-"))
+            except ValueError:
+                continue
+            if i not in self.markers or j not in self.markers:
+                continue
+            t = float(self.tape[key])
+            m = float(np.linalg.norm(np.subtract(self.markers[i][:2], self.markers[j][:2])))
+            rows.append({"pair": key, "tape": round(t, 1), "model": round(m, 1), "diff": round(m - t, 1)})
+            worst = max(worst, abs(m - t))
+        if not rows:
+            return None
+        return {"rows": rows, "worst": round(worst, 1), "ok": worst <= TAPE_WARN_MM}
+
+    def markers_from_tape(self, apply=False):
+        """Build a shape-correct marker model from the tape, placed onto the touched points.
+
+        The tape fixes the shape exactly; only where that shape sits in the arm's frame comes
+        from the arm. So a distorted forward kinematics can still shift and rotate the result
+        but can no longer deform it - which matters because solvePnP is far more sensitive to
+        a wrong shape than to a wrong placement. A wrong shape gets partly absorbed as camera
+        tilt and then throws off every raycast.
+
+        Both reflections of the reconstructed shape are fitted and the better one kept, since
+        a rigid fit cannot undo a mirror.
+        """
+        ids = sorted(self.markers)
+        if len(ids) != 4:
+            return None, "need exactly 4 markers"
+        anchor = {i: self.touched.get(i) or self.markers.get(i) for i in ids}
+        if any(anchor[i] is None for i in ids):
+            return None, "no arm-measured positions to place the tape shape onto"
+        try:
+            shape, closure = shape_from_distances(self.tape, ids)
+        except ValueError as e:
+            return None, str(e)
+
+        B = np.array([anchor[i][:2] for i in ids], float)
+        best = None
+        for mirror in (1.0, -1.0):
+            A = np.array([[shape[i][0], mirror * shape[i][1]] for i in ids], float)
+            R, t = fit_rigid_2d(A, B)
+            fit = (R @ A.T).T + t
+            res = np.linalg.norm(fit - B, axis=1)
+            rms = float(np.sqrt((res ** 2).mean()))
+            if best is None or rms < best[0]:
+                best = (rms, fit, res)
+        rms, fit, res = best
+
+        out = {}
+        for k, i in enumerate(ids):
+            z = anchor[i][2] if len(anchor[i]) > 2 else self.table_z(fit[k][0], fit[k][1])
+            out[i] = [round(float(fit[k][0]), 1), round(float(fit[k][1]), 1), round(float(z), 1)]
+        info = (f"tape shape closes to {closure:.1f} mm | placed onto the arm-measured points with "
+                f"{rms:.1f} mm RMS residual (per marker: "
+                + ", ".join(f"{i}:{res[k]:.0f}" for k, i in enumerate(ids)) + " mm)")
+        if rms > TAPE_WARN_MM:
+            info += (f" | the arm-measured shape disagrees with the tape by {rms:.0f} mm RMS, so "
+                     "forward kinematics is distorted - re-measure link lengths and joint zeros")
+        if apply:
+            self.markers = out
+            self.measured = True
+            self._fit_plane(); self.hist.clear(); self.rvec = self.tvec = None
+            self.fit_info = info
+            self.save()
+        return out, info
 
     def reset_markers(self):
         self.markers = {k: list(v) for k, v in DEFAULT_MARKERS.items()}
@@ -272,6 +404,18 @@ class Vision:
 
     # ---------- lifecycle ----------
     def start(self):
+        chk = self.tape_check()
+        if chk and not chk["ok"]:
+            self.log(f"MARKER MODEL FAILS THE TAPE CHECK: worst pair is off by {chk['worst']:.0f} mm. "
+                     "Pairwise distances do not depend on where the model sits, so this is a SHAPE "
+                     "error - no trim or offset can fix it, and solvePnP will absorb part of it as "
+                     "camera tilt and throw off every table coordinate. Rebuild the model from the "
+                     "tape (Camera tab -> Marker calibration -> From tape).", "err")
+            for r in chk["rows"]:
+                self.log(f"  {r['pair']}: tape {r['tape']:.0f} mm, model {r['model']:.1f} mm "
+                         f"({r['diff']:+.1f})", "warn")
+        elif chk:
+            self.log(f"marker model agrees with the tape (worst pair {chk['worst']:.1f} mm)", "ok")
         if self.K is None:
             self.log(f"Vision disabled: {self.problem}", "err"); return
         self.running = True
@@ -550,6 +694,7 @@ class Vision:
                 "fps": round(self.fps, 1), "err": {str(k): round(v, 2) for k, v in errs.items()},
                 "markers": {str(k): v for k, v in self.markers.items()}, "touched": {str(k): v for k, v in self.touched.items()},
                 "measured": self.measured, "fit_info": self.fit_info, "plane": [round(c, 5) for c in self.plane],
+                "tape": self.tape, "tape_check": self.tape_check(), "aruco_mm": self.aruco_mm,
                 "settings": self.s, "roll": self.roll, "detect": self.detect_on, "prompts": self.prompts,
                 "dets": [{"name": d["name"], "conf": round(d["conf"], 2), "x": round(d["x"], 1), "y": round(d["y"], 1),
                           "closing": None if d["closing"] is None else round(d["closing"], 1)} for d in self.dets[:5]],
