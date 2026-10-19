@@ -45,6 +45,17 @@ The arm-measured marker heights agree: 5.0, 5.0, 5.2 and 5.4 mm, a 0.4 mm spread
 the desk. So the geometry above holds and a near-flat table plane in arm coordinates is the
 correct result.
 
+**Measured slope (2026-10-19):** 35 mm of drop over 457 mm along the surface, back to front,
+so the plate leans forward-down by **4.39 degrees**. Front edge 905 mm from the floor, back
+edge 940 mm.
+
+This matters only for gravity-referenced measurements. Any joint angle read with an
+inclinometer or a plumb line must have 4.39 degrees subtracted before it means anything to
+the kinematics, because joint angles are defined relative to the base plate and not to
+gravity. Uncorrected it is worth 18 mm of tip error at 230 mm of reach and 27 mm at 350 mm.
+Measuring instead in the table's own frame - distances along the surface and heights above it
+- sidesteps the whole correction, since the table and the arm tilted together.
+
 Worth re-checking only if the mounting is ever disturbed, because it is not self-evidently
 rigid: M5 screws in M6 holes give the plate room to shift, and the PETG spacers between the
 two aluminium plates can differ in height or compress unevenly under the nuts. Either tilts

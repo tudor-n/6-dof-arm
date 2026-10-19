@@ -22,10 +22,23 @@ pulse window before any per-unit shortfall, so a commanded degree is not an actu
 that is the gain. Separately, the pose the model calls "all joints at zero" (arm straight up)
 is not the pose the arm actually adopts - that is the zero.
 
-MEASURING THE ANGLES. For the pitch joints (shoulder, elbow, wrist pitch) a phone
-inclinometer or a digital angle gauge taped to the link is accurate enough. For the base,
-you do not need a protractor at all: the ArUco markers have known true azimuths, so jogging
-the tip onto each marker gives you four (servo, angle) pairs for free - run with
+MEASURING THE ANGLES. Two ways in, and the second needs no angle tool at all.
+
+  "angles"     - direct readings from a phone inclinometer or a digital angle gauge taped to
+                 the link. Gravity-referenced, so it needs --plate-tilt (see below).
+
+  "axis_poses" - the forward offset and height of each joint axis, measured with a ruler and
+                 a square IN THE TABLE'S OWN FRAME: forward along the table surface from the
+                 base rotation axis, height straight up from the table surface. The joint
+                 angles then fall out of atan2 between consecutive axes, and the link lengths
+                 come free from the same numbers as a cross-check on config.json.
+                 Because the measurements are already relative to the table - which the base
+                 plate is bolted flat to - they are plate-relative to begin with and
+                 --plate-tilt MUST NOT be applied. That is the real advantage: the tilt
+                 cancels instead of being corrected.
+
+For the base, you need no protractor either way: the ArUco markers have known true azimuths,
+so jogging the tip onto each marker gives four (servo, angle) pairs for free - run with
 --base-from-markers to list them.
 
 THE TILTED-DESK TRAP. An inclinometer measures from gravity-vertical, but joint angles are
@@ -54,12 +67,70 @@ TEMPLATE = {
             "safely allows. Delete any joint you are not calibrating.",
     "_plate_tilt_deg": "Measure the base plate's tilt with the same inclinometer and pass it "
                        "as --plate-tilt. Positive = leaning forward, away from you.",
+    "_axis_method": "Alternative to measuring angles: fill in axis_poses instead and no angle "
+                    "tool is needed. All coordinates are [forward, height] in mm - forward "
+                    "along the table surface from the base rotation axis, height up from the "
+                    "table surface - with the base at its zero so the arm lies in one plane. "
+                    "Do NOT pass --plate-tilt with this method; these are already "
+                    "plate-relative. Delete this section if you measured angles instead.",
+    "shoulder_axis": [0, 83],
+    "axis_poses": [
+        {"servo": [90, 70, 120, 150], "elbow": [None, None], "wrist": [None, None], "tip": [None, None]},
+        {"servo": [90, 90, 90, 150], "elbow": [None, None], "wrist": [None, None], "tip": [None, None]},
+        {"servo": [90, 110, 60, 120], "elbow": [None, None], "wrist": [None, None], "tip": [None, None]},
+        {"servo": [90, 140, 40, 100], "elbow": [None, None], "wrist": [None, None], "tip": [None, None]}
+    ],
     "base": [[45, None], [70, None], [90, None], [110, None], [135, None]],
     "shoulder": [[40, None], [70, None], [90, None], [120, None], [150, None]],
     "elbow": [[30, None], [60, None], [90, None], [120, None], [160, None]],
     "wrist pitch": [[60, None], [90, None], [120, None], [150, None], [180, None]],
     "wrist roll": [[0, None], [45, None], [90, None], [135, None], [180, None]],
 }
+
+
+def angles_from_axes(shoulder, elbow, wrist, tip):
+    """Pitch-joint angles and link lengths from four axis positions in the table frame.
+
+    Each argument is (forward, height): forward measured along the table surface from the
+    base rotation axis, height measured up from the table surface, with the base at its zero
+    so the whole arm lies in one vertical plane.
+
+    Mirrors server.py's fk(): a1, a2 and p are the directions of the upper arm, the forearm
+    and the tool, and the joint angles are the turns between them.
+    """
+    (rs, zs), (re, ze), (rw, zw), (rt, zt) = shoulder, elbow, wrist, tip
+    a1 = math.degrees(math.atan2(ze - zs, re - rs))
+    a2 = math.degrees(math.atan2(zw - ze, rw - re))
+    pp = math.degrees(math.atan2(zt - zw, rt - rw))
+    return {
+        "shoulder": 90.0 - a1,          # fk: a1 = 90 - shoulder
+        "elbow": a1 - a2,               # fk: a2 = a1 - elbow
+        "wrist pitch": a2 - pp,         # fk: p  = a2 - wrist
+        "links": {"L1": math.dist(shoulder, elbow),
+                  "L2": math.dist(elbow, wrist),
+                  "L3": math.dist(wrist, tip)},
+        "L0": zs,
+    }
+
+
+def pairs_from_axis_poses(poses, shoulder_axis):
+    """Turn measured axis poses into per-joint (servo, angle) pairs, plus link stats."""
+    SERVO_INDEX = {"shoulder": 1, "elbow": 2, "wrist pitch": 3}
+    out = {k: [] for k in SERVO_INDEX}
+    links = {"L0": [], "L1": [], "L2": [], "L3": []}
+    for i, pose in enumerate(poses):
+        try:
+            servo = pose["servo"]
+            got = angles_from_axes(shoulder_axis, pose["elbow"], pose["wrist"], pose["tip"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"axis_poses[{i}] is malformed: {e}") from e
+        for name, idx in SERVO_INDEX.items():
+            if idx < len(servo) and servo[idx] is not None:
+                out[name].append([float(servo[idx]), got[name]])
+        links["L0"].append(got["L0"])
+        for k, v in got["links"].items():
+            links[k].append(v)
+    return out, links
 
 
 def fit_line(xs, ys):
@@ -157,10 +228,43 @@ def main():
     by_name = {j["name"]: j for j in cfg["joints"]}
     results, failed = {}, []
 
-    for name, pairs in cal.items():
-        if name.startswith("_"):
+    # axis measurements are plate-relative already, so the tilt must not be applied to them
+    axis_pairs, axis_tilt = {}, 0.0
+    poses = [q for q in cal.get("axis_poses", [])
+             if all(v is not None for k in ("elbow", "wrist", "tip") for v in q.get(k, [None]))]
+    if poses:
+        sh = cal.get("shoulder_axis")
+        if not sh or any(v is None for v in sh):
+            failed.append("axis_poses given but shoulder_axis is missing")
+        else:
+            try:
+                axis_pairs, links = pairs_from_axis_poses(poses, sh)
+                print(f"{len(poses)} axis pose(s) measured in the table frame - these are already "
+                      "plate-relative, so no tilt correction is applied to them.\n")
+                print("link lengths implied by those measurements:")
+                cl = cfg["links"]
+                for k in ("L0", "L1", "L2", "L3"):
+                    vs = links[k]
+                    if not vs:
+                        continue
+                    mean = sum(vs) / len(vs)
+                    spread = max(vs) - min(vs)
+                    flag = ""
+                    if abs(mean - cl.get(k, mean)) > 3.0:
+                        flag = f"  <-- config.json says {cl.get(k)}"
+                    print(f"  {k} {mean:7.1f} mm   spread across poses {spread:5.1f} mm{flag}")
+                print("  (a large spread means an axis position was misread, not that the link "
+                      "changed length)\n")
+            except ValueError as e:
+                failed.append(str(e))
+
+    for name, pairs in list(cal.items()) + [(k, v) for k, v in axis_pairs.items() if v]:
+        if name.startswith("_") or name in ("axis_poses", "shoulder_axis"):
             continue
-        got, err = fit_joint(name, pairs, a.plate_tilt)
+        if name in axis_pairs and axis_pairs[name] and name in cal:
+            continue        # prefer the axis-derived pairs over duplicate angle entries
+        tilt = 0.0 if (name in axis_pairs and pairs is axis_pairs[name]) else a.plate_tilt
+        got, err = fit_joint(name, pairs, tilt)
         if err:
             failed.append(err)
             continue

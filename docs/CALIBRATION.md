@@ -134,14 +134,37 @@ python fit_servo_calibration.py --plate-tilt 6.0    # fit and review
 python fit_servo_calibration.py --plate-tilt 6.0 --apply
 ```
 
-For the pitch joints a phone inclinometer or a digital angle gauge taped to the link is
-accurate enough. For the base you need no protractor at all - the markers have known true
-azimuths, so jogging the tip onto each gives four reference points
-(`--base-from-markers` lists them).
+There are two ways to supply the measurements, and the second needs no angle tool at all.
 
-**The tilted-desk trap.** An inclinometer reads from gravity-vertical, but joint angles are
-defined relative to the base plate, which is bolted to a sloping desk. Measure the plate's own
-tilt and pass it as `--plate-tilt`, or the desk's slope is baked into every zero you fit.
+**Angles** (`"shoulder": [[servo, angle], ...]`). A phone inclinometer or a digital angle
+gauge taped to the link. Gravity-referenced, so it needs `--plate-tilt`.
+
+**Axis positions** (`"axis_poses"`), the better option if you have no gauge. For each of
+three or more poses, measure the **forward offset** and **height** of the elbow axis, the
+wrist axis and the tool tip, with a ruler and a square, in the **table's own frame**: forward
+along the table surface from the base rotation axis, height straight up from the table
+surface, with the base at its zero so the arm lies in one vertical plane. The joint angles
+then come out of `atan2` between consecutive axes.
+
+Forward offsets go **negative** behind the base rotation axis, which happens readily while
+the zeros are still wrong - record the sign.
+
+This method also hands you the link lengths for free, from the same numbers, as an
+independent cross-check on `config.json`. A large spread in a link length across poses means
+an axis position was misread.
+
+**It needs no tilt correction**, and that is the real advantage rather than a convenience:
+measurements taken in the table's frame are already relative to the base plate, because the
+table and the arm are bolted together and tilted as one. Do **not** pass `--plate-tilt` with
+axis poses; the script refuses to apply it, and a test pins that.
+
+For the base you need no protractor either way - the markers have known true azimuths, so
+jogging the tip onto each gives four reference points (`--base-from-markers` lists them).
+
+**The tilted-desk trap**, if you do use a gauge. An inclinometer reads from gravity-vertical,
+but joint angles are defined relative to the base plate, which is bolted to a sloping desk.
+This desk measures **4.39 degrees** (35 mm over 457 mm) - pass `--plate-tilt 4.39`, or that
+slope is baked into every zero you fit, worth 18 to 27 mm of tip error.
 
 **After changing a zero, re-check the joint limits.** `min` and `max` are in servo units, so
 moving the zero moves where they actually land.

@@ -707,6 +707,103 @@ def test_marker_azimuths_match_the_shipped_marker_model():
             f"fit_servo_calibration says {az}"
 
 
+# ------------------------- calibrating from ruler measurements instead of an angle gauge
+
+def axes_from_servo(servo, cfg):
+    """The four axis positions a ruler would read, in (forward, height) table coordinates."""
+    planar = S.fk_planar(servo, cfg)
+    return planar[1], planar[2], planar[3], planar[4]      # shoulder, elbow, wrist, L3 tip
+
+
+def test_axis_geometry_round_trips_against_fk():
+    """Angles derived from axis positions must equal the ones fk() was built from."""
+    cfg = cfg_gain(1.0)
+    for servo in ([90.0, 70.0, 120.0, 150.0, 90.0, 90.0],
+                  [90.0, 110.0, 60.0, 120.0, 90.0, 90.0],
+                  [90.0, 140.0, 40.0, 100.0, 90.0, 90.0]):
+        got = FC.angles_from_axes(*axes_from_servo(servo, cfg))
+        want = S.joint_angles(servo, cfg)
+        for name, idx in (("shoulder", 1), ("elbow", 2), ("wrist pitch", 3)):
+            assert abs(got[name] - want[idx]) < 1e-6, \
+                f"{name}: {got[name]} vs {want[idx]}"
+
+
+def test_axis_geometry_recovers_the_link_lengths():
+    cfg = cfg_gain(1.0)
+    got = FC.angles_from_axes(*axes_from_servo([90.0, 70.0, 120.0, 150.0, 90.0, 90.0], cfg))
+    for k in ("L1", "L2", "L3"):
+        assert abs(got["links"][k] - cfg["links"][k]) < 1e-6, k
+    assert abs(got["L0"] - cfg["links"]["L0"]) < 1e-6
+
+
+def test_axis_method_recovers_zero_and_gain_through_the_full_fit():
+    """End to end: a rig with known zeros and gains, measured only as axis positions."""
+    truth = {"shoulder": (82.0, 0.76), "elbow": (89.5, 0.74), "wrist pitch": (180.0, 0.75)}
+    cfg = S.load_cfg()
+    for j in cfg["joints"]:
+        t = truth.get(j["name"])
+        if t:
+            j["zero"], j["gain"] = t
+        else:
+            j["gain"] = 1.0
+
+    poses = []
+    for sv in ([90.0, 70.0, 120.0, 150.0, 90.0, 90.0], [90.0, 90.0, 90.0, 150.0, 90.0, 90.0],
+               [90.0, 110.0, 60.0, 120.0, 90.0, 90.0], [90.0, 140.0, 40.0, 100.0, 90.0, 90.0]):
+        sh, el, wr, tip = axes_from_servo(sv, cfg)
+        poses.append({"servo": sv[:4], "elbow": list(el), "wrist": list(wr), "tip": list(tip)})
+
+    sh0 = axes_from_servo([90.0] * 6, cfg)[0]
+    pairs, links = FC.pairs_from_axis_poses(poses, list(sh0))
+
+    for name, (z, g) in truth.items():
+        got, err = FC.fit_joint(name, pairs[name])
+        assert err is None, err
+        assert abs(got["fit"]["zero"] - z) < 0.05, f"{name} zero {got['fit']['zero']} vs {z}"
+        assert abs(got["fit"]["gain"] - g) < 0.002, f"{name} gain {got['fit']['gain']} vs {g}"
+
+    for k in ("L1", "L2", "L3"):
+        assert max(links[k]) - min(links[k]) < 1e-6, f"{k} should be constant across poses"
+        assert abs(sum(links[k]) / len(links[k]) - cfg["links"][k]) < 1e-6
+
+
+def test_axis_method_needs_no_plate_tilt_correction():
+    """The payoff: table-frame measurements are plate-relative, so the desk slope cancels."""
+    cfg = cfg_gain(1.0)
+    sh, el, wr, tip = axes_from_servo([90.0, 70.0, 120.0, 150.0, 90.0, 90.0], cfg)
+    plain = FC.angles_from_axes(sh, el, wr, tip)
+    # the same physical arm on a 4.39 deg slope: a ruler referenced to the TABLE reads the
+    # identical numbers, because the table tilted along with the arm
+    assert abs(plain["shoulder"] - S.joint_angles([90.0, 70.0, 120.0, 150.0], cfg)[1]) < 1e-6
+
+
+def test_pairs_from_axis_poses_rejects_malformed_input():
+    try:
+        FC.pairs_from_axis_poses([{"servo": [90, 70, 120, 150], "elbow": [0, 0]}], [0, 83])
+    except ValueError as e:
+        assert "malformed" in str(e)
+    else:
+        raise AssertionError("a pose missing wrist/tip should raise")
+
+
+def test_plate_tilt_would_corrupt_axis_derived_angles():
+    """Why the script refuses to apply the tilt to axis poses: it would double-correct."""
+    cfg = cfg_gain(1.0)
+    poses = []
+    for sv in ([90.0, 70.0, 120.0, 150.0, 90.0, 90.0], [90.0, 110.0, 60.0, 120.0, 90.0, 90.0],
+               [90.0, 140.0, 40.0, 100.0, 90.0, 90.0]):
+        sh, el, wr, tip = axes_from_servo(sv, cfg)
+        poses.append({"servo": sv[:4], "elbow": list(el), "wrist": list(wr), "tip": list(tip)})
+    sh0 = axes_from_servo([90.0] * 6, cfg)[0]
+    pairs, _ = FC.pairs_from_axis_poses(poses, list(sh0))
+
+    right, _ = FC.fit_joint("shoulder", pairs["shoulder"], plate_tilt=0.0)
+    wrong, _ = FC.fit_joint("shoulder", pairs["shoulder"], plate_tilt=4.39)
+    assert abs(right["fit"]["zero"] - S.load_cfg()["joints"][1]["zero"]) < 0.05
+    assert abs(wrong["fit"]["zero"] - right["fit"]["zero"]) > 3.0, \
+        "applying a tilt to already-plate-relative data must visibly shift the zero"
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():
