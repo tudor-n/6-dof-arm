@@ -5,3 +5,6 @@
 .vscode/ipch
 *.pt 
 weights/
+__pycache__/
+*.pyc
+debug-*.log
