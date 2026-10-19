@@ -5,3 +5,8 @@
 .vscode/ipch
 *.pt 
 weights/
+__pycache__/
+*.pyc
+debug-*.log
+servo_cal.json
+PR_DESCRIPTION.md
