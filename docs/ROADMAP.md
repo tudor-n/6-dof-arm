@@ -153,19 +153,38 @@ is fixed. `tape_check()` now guards this permanently and complains at startup.
 | 2 | 337.6 | +49.02° |
 | 3 | 339.3 | -45.12° |
 
-Correcting the near edge needs `r` scaled **up** by 1.11; correcting the far edge needs it
-scaled **down** by 0.81. A single scale cannot do both, and the same contradiction appears if
-the error is attributed to yaw instead. So it is a coupled error - most likely link lengths
-**and** joint zeros together, since a shoulder or elbow zero error changes reach differently
-depending on how folded the arm is. Candidates, in order:
+Solving for the reach each edge implies, holding the FK yaw angles fixed:
 
-1. **Link lengths**, measured between brackets rather than between axes of rotation.
-2. **Shoulder/elbow zeros**, which couple into reach non-linearly.
-3. **Servo pulse scale** (HARDWARE.md): 0-180° maps to 732-2441 µs while MG996R are
-   nominally 500-2500 µs, so a commanded degree may not be an actual degree.
-4. **Gravity sag at extension**, which a cheap arm has plenty of and which is inherently
-   reach-dependent - matching the observed pattern.
-5. **Tool offset**, still unmeasured, contaminating every touch differently by pitch.
+| edge | FK reach | reach the tape implies | FK error |
+|---|---|---|---|
+| near (0-1) | ~182 | ~203 | **11% too short** |
+| far (2-3) | ~338 | ~274 | **19% too long** |
+
+**The error changes sign with reach**, crossing zero somewhere near r = 250 mm. That is the
+most informative thing in the dataset, because it discriminates between the candidates:
+
+- A **link-length** error contributes `eps * L * cos(a)` to reach. Across the forward working
+  range those cosines keep their sign, so a wrong link length scales reach monotonically - it
+  cannot overestimate at long reach while underestimating at short reach.
+- A **joint-zero** error contributes roughly `-L * sin(a) * delta`. Between a folded pose (the
+  near markers) and an extended one (the far markers) `sin(a)` changes substantially, so a zero
+  error naturally produces an error that varies in magnitude *and flips sign* with reach.
+
+So the sign flip points at the **shoulder and elbow zeros** rather than the link lengths.
+Re-measure those first; it is also the cheaper measurement. Revised order:
+
+1. **Shoulder/elbow zeros.** Favoured by the sign flip above.
+2. **Servo pulse scale** (HARDWARE.md): 0-180 degrees maps to 732-2441 microseconds while
+   MG996R are nominally 500-2500, so a commanded degree may not be an actual degree. This
+   acts as a gain on every joint angle, so it too varies with pose.
+3. **Gravity sag at extension**, inherently reach-dependent, and a cheap arm has plenty. It
+   would push the far markers outward when recorded, which matches the sign.
+4. **Link lengths**, measured between brackets rather than between axes of rotation. Still
+   worth checking, but demoted: alone it cannot produce the sign flip.
+5. **Tool offset**, still unmeasured, contaminating each touch differently by wrist pitch.
+
+These are not mutually exclusive and would partly mask one another, which is why the
+Cartesian measurement below is worth more than any further inference from four points.
 
 Settling this needs the direct measurement below.
 
