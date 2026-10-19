@@ -325,7 +325,10 @@ async def pick_seq(x, y, closing):
         want_g = tz + s["z_grasp_offset"]; grasp = max(s["z_floor"], want_g); hover = tz + s["hover"]
         log(f"PICK start: object ({x:.1f}, {y:.1f}), table z {tz:.1f} -> hover z {hover:.0f}, grasp z {grasp:.1f}")
         if grasp != want_g:
-            log(f"grasp z would be {want_g:.1f} (table {tz:.1f} {s['z_grasp_offset']:+.0f}) but the floor is {s['z_floor']:.1f}, so the tip goes to {grasp:.1f}", "warn")
+            log(f"grasp z would be {want_g:.1f} (table {tz:.1f} {s['z_grasp_offset']:+.1f}) but z_floor is "
+                f"{s['z_floor']:.1f}, so the tip goes to {grasp:.1f} instead. While this keeps firing, "
+                f"z_grasp_offset has NO EFFECT - z_floor is setting the grasp depth on its own, and "
+                f"adjusting z_grasp_offset will change nothing. Lower z_floor to hand control back.", "warn")
         S.tgt[5] = clamp(s["grip_open"], 0, 180)
         if closing is not None:
             az = math.degrees(math.atan2(y, x)); r = world_to_servo_roll(closing, az); S.tgt[4] = r
