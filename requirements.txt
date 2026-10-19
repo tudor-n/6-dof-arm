@@ -1,2 +1,11 @@
+# Arm brain + web UI
 aiohttp
 pyserial
+
+# Vision: camera, ArUco pose, table raycast (opencv-contrib for cv2.aruco)
+opencv-contrib-python
+numpy
+
+# Object detection in the Camera tab. Optional: server.py runs with --no-camera, and the
+# camera itself works without this - only the Detect checkbox needs it.
+ultralytics
