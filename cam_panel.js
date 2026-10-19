@@ -37,7 +37,7 @@
   <div class="card" style="flex:2 1 620px">
     <div id="cwarn" class="chips"></div>
     <img id="cvid" alt="camera feed (click a point on the table)">
-    <div class="mono" id="cstat" style="margin:6px 0"></div>
+    <div class="mono" id="cstat" style="margin:6px 0;white-space:pre-wrap;line-height:1.5"></div>
     <div class="row wrap">
       <label><input type="checkbox" data-s="show_grid"> table grid</label>
       <label><input type="checkbox" data-s="show_tip"> arm tip</label>
@@ -144,11 +144,25 @@
       V.warn.forEach(x => w.appendChild(chip('warn', x)));
       if (!V.pose) w.appendChild(chip('warn', 'Camera pose not found: all 4 ArUco markers must be visible.'));
       if (!V.measured) w.appendChild(chip('warn', 'Marker positions are still the old hand-measured values. Use "Marker calibration" after moving the base.'));
-      const er = Object.values(V.err);
-      if (er.length && Math.max(...er) > 3) w.appendChild(chip('warn', `Reprojection error up to ${Math.max(...er).toFixed(1)} px: stored marker coordinates disagree with the camera.`));
+      // Pose health decides whether picking is allowed at all, so it leads.
+      if (V.pose) w.appendChild(chip(V.healthy ? 'ok' : 'err', (V.healthy ? 'Pose OK - ' : 'POSE UNRELIABLE - ') + V.health));
+      if (V.rejects) w.appendChild(chip('warn', `${V.rejects} pose solves rejected in a row - the pose on screen is stale. Check the log for why.`));
+      if (V.calib && V.calib.rms != null && V.calib.rms > 1.0) w.appendChild(chip('warn', `Camera calibration RMS is ${V.calib.rms.toFixed(2)} px. Above ~1 px the intrinsics are too coarse for mm work - rerun calibrate_camera.py with a larger board.`));
+      if (V.calib && V.calib.rms == null) w.appendChild(chip('warn', 'No camera_calib.json: the stream resolution cannot be checked against the calibration. Rerun calibrate_camera.py.'));
       if (V.busy) w.appendChild(chip('ok', 'Pick running. STOP cancels.'));
     }
-    $('cstat').textContent = `${V.res.join('x')}  ${V.fps} fps  markers seen: ${V.seen.join(', ') || 'none'}  |  table plane z = ${V.plane[0]}x + ${V.plane[1]}y + ${V.plane[2]}`;
+    // Two reprojection figures, deliberately both shown: "solve" is the raw per-frame fit,
+    // "in use" is the averaged pose actually driving the arm. solve small + in-use large
+    // means the averaging is corrupting a good solve, which is a different bug from both
+    // being large (wrong marker coordinates or wrong intrinsics).
+    const cal = V.calib && V.calib.res ? `calib ${V.calib.res.join('x')}${V.calib.rms != null ? ` rms ${V.calib.rms.toFixed(2)}px` : ''}` : 'calib unknown';
+    $('cstat').textContent =
+      `${V.res.join('x')}  ${V.fps} fps  ${cal}  markers seen: ${V.seen.join(', ') || 'none'}
+` +
+      `table plane z = ${V.plane[0]}x + ${V.plane[1]}y + ${V.plane[2]}` +
+      (V.cam_pos ? `   camera at X${V.cam_pos[0]} Y${V.cam_pos[1]} Z${V.cam_pos[2]}` : '') +
+      (V.diag ? `
+${V.diag}` : '');
     cam.querySelectorAll('input[data-s]').forEach(c => c.checked = !!V.settings[c.dataset.s]);
     $('clock').textContent = V.locked ? 'Unlock pose' : 'Lock pose';
     if (idle('cdet')) $('cdet').checked = V.detect;
@@ -157,7 +171,10 @@
     $('cclick').textContent = V.click ? `Target  X ${V.click.x}  Y ${V.click.y}  (table z ${V.click.z})` : 'Click the video to choose a point on the table.';
     [0, 1, 2, 3].forEach(i => {
       const m = V.markers[i], t = V.touched[i], e = V.err[i];
-      $('cm' + i).textContent = (t ? `measured ${t.join(', ')}` : `stored ${m.join(', ')}`) + (e != null ? `   ${e.toFixed(1)} px` : '');
+      // touched entries are [x, y, z, tool_pitch, roll]; pitch/roll are absent on older records
+      const pose = t && t.length > 4 && t[3] != null ? `  @pitch ${t[3]}° roll ${t[4]}` : '';
+      $('cm' + i).textContent = (t ? `measured ${t.slice(0, 3).join(', ')}${pose}` : `stored ${m.join(', ')}`)
+        + (e != null ? `   ${e.toFixed(1)} px` : '');
     });
     $('cmfit').textContent = V.fit_info;
     $('crinfo').textContent = `roll zero = servo ${V.roll.zero}   servo up turns jaws ${V.roll.sign > 0 ? 'CCW' : 'CW'} (from above)` + (V.jaw != null ? `   jaws now close along ${V.jaw.toFixed(0)}° (table)` : '');
