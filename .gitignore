@@ -8,3 +8,4 @@ weights/
 __pycache__/
 *.pyc
 debug-*.log
+servo_cal.json

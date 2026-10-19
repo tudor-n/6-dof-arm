@@ -188,10 +188,53 @@ Cartesian measurement below is worth more than any further inference from four p
 
 Settling this needs the direct measurement below.
 
-### 2b. Measure the markers in Cartesian coordinates
+### 2c. Two separate joint faults, not one  **(revised 2026-10-19)**
 
-The tape fixes the shape but not where it sits relative to the base, which is why the
-rebuilt model still carries the FK placement error. Eight numbers remove the arm from the
+An earlier version of this file claimed a single shared servo gain explained everything. That
+was too strong, and a direct observation contradicts it: at the pose the model calls all-zero
+(arm straight up) **the real arm leans slightly forward**, and it does so on a flat surface as
+well as on the bolted slanted desk. Checking both surfaces rules out the desk, so this is the
+arm's own zero calibration. A gain error cannot produce it - at zero commanded angle a gain
+error contributes nothing, so a lean at that pose is positive evidence of a ZERO error.
+
+The two faults are separable by their signatures, and the base yaw data settles that one:
+
+| marker | FK yaw | true yaw | difference | ratio |
+|---|---|---|---|---|
+| ID0 | +72.85 | +54.62 | +18.23 | 1.334 |
+| ID1 | -77.68 | -61.37 | -16.31 | 1.266 |
+| ID2 | +49.02 | +35.17 | +13.85 | 1.394 |
+| ID3 | -45.12 | -34.71 | -10.41 | 1.300 |
+
+The differences **flip sign with the angle** while the ratios hold steady at 1.32 (spread
+3.5%). A zero offset would add the same signed amount to every yaw; it does not. So:
+
+- **Base yaw: a gain error**, confirmed multiplicative. FK over-reports by about a third.
+- **Pitch joints: at least a zero error**, confirmed by the forward lean. Probably a gain
+  error too, since they share the pulse mapping, but four marker positions cannot separate
+  the two in reach - both produce pose-dependent reach error, which is why the earlier
+  single-cause reading looked sufficient.
+
+This is why `config.json` carries **both** `zero` and `gain` per joint, and why calibrating
+only one of them would leave the arm wrong. `fit_servo_calibration.py` fits both at once from
+measured angles.
+
+### 2b. Measure the markers in Cartesian coordinates  **(done 2026-10-19)**
+
+Measured and installed: ID0 (134.2, +189), ID1 (109.2, -200), ID2 (285.2, +201),
+ID3 (290.2, -201), from perpendicular offsets to a drawn centre line plus distances along it
+and a 33.2 mm datum correction to the rotation axis. These agree with the six independent
+tape distances to 7 mm worst and 2 mm on five of six pairs, so the marker model no longer
+depends on the arm at all and the camera pose is now trustworthy in absolute terms.
+
+The remaining uncertainty is the X datum: solving for the offset that best fits the yaw-gain
+story prefers 55 mm over the measured 33.2 mm, but the fit barely improves (spread 0.0454
+against 0.0470), so the method cannot distinguish them. The practical consequence is that the
+base gain is pinned only to the range 1.30-1.42. Measuring the gain directly on the servo
+settles it and does not depend on the datum at all.
+
+Historical note - the tape fixed the shape but not where it sat relative to the base, which is
+why rebuilding from tape alone still carried the FK placement error. Eight numbers remove the arm from the
 loop entirely: with a square along the robot's centre line, measure each marker's distance
 **along** that line from the base rotation axis (X) and its **perpendicular** offset (Y).
 

@@ -616,6 +616,97 @@ def test_joint_ranges_report_actual_degrees():
         "halving the gain must halve the reachable angular span"
 
 
+# ------------------------------------------------- servo calibration fitting (zero + gain)
+
+import fit_servo_calibration as FC
+
+
+def synth_pairs(zero, sign, gain, servos, noise=0.0, seed=0):
+    """(servo, actual angle) pairs for a joint with known calibration."""
+    rng = np.random.default_rng(seed)
+    return [[sv, sign * (sv - zero) * gain + (rng.normal(0, noise) if noise else 0.0)]
+            for sv in servos]
+
+
+def test_fit_recovers_a_known_calibration():
+    for zero, sign, gain in [(90.0, 1, 1.0), (90.0, 1, 0.75), (89.5, -1, 0.82), (180.0, -1, 0.706)]:
+        pairs = synth_pairs(zero, sign, gain, [40, 70, 90, 120, 150])
+        got, err = FC.fit_joint("shoulder", pairs)
+        assert err is None, err
+        f = got["fit"]
+        assert abs(f["zero"] - zero) < 0.05, f"zero {f['zero']} vs {zero}"
+        assert f["sign"] == sign
+        assert abs(f["gain"] - gain) < 0.001, f"gain {f['gain']} vs {gain}"
+        assert got["r2"] > 0.9999
+
+
+def test_fit_separates_zero_from_gain():
+    """The point of a two-parameter fit: a zero error and a gain error look alike at one
+    operating point and only separate across a range."""
+    pairs = synth_pairs(75.0, 1, 0.75, [40, 70, 90, 120, 150])
+    got, _ = FC.fit_joint("shoulder", pairs)
+    assert abs(got["fit"]["zero"] - 75.0) < 0.05
+    assert abs(got["fit"]["gain"] - 0.75) < 0.001
+
+
+def test_fit_survives_realistic_measurement_noise():
+    pairs = synth_pairs(90.0, 1, 0.75, [40, 60, 90, 120, 150], noise=0.4, seed=5)
+    got, _ = FC.fit_joint("shoulder", pairs)
+    assert abs(got["fit"]["gain"] - 0.75) < 0.02
+    assert abs(got["fit"]["zero"] - 90.0) < 1.5
+
+
+def test_fit_flags_an_outlier_instead_of_swallowing_it():
+    pairs = synth_pairs(90.0, 1, 0.75, [40, 70, 90, 120, 150])
+    pairs[2][1] += 9.0                      # one badly misread gauge
+    got, _ = FC.fit_joint("shoulder", pairs)
+    assert got["notes"], "a 9 degree outlier must produce a warning"
+    assert any("residual" in n or "r2" in n for n in got["notes"])
+
+
+def test_plate_tilt_is_subtracted_from_pitch_joints_only():
+    """Gravity-referenced readings carry the desk slope; joint angles are plate-relative."""
+    pairs = synth_pairs(90.0, 1, 0.75, [40, 70, 90, 120, 150])
+    tilted = [[sv, a + 6.0] for sv, a in pairs]
+
+    pitch, _ = FC.fit_joint("shoulder", tilted, plate_tilt=6.0)
+    assert abs(pitch["fit"]["zero"] - 90.0) < 0.05, "tilt should be removed for a pitch joint"
+
+    base, _ = FC.fit_joint("base", tilted, plate_tilt=6.0)
+    assert abs(base["fit"]["zero"] - 90.0) > 1.0, \
+        "base yaw is not gravity-referenced, so plate tilt must NOT be applied to it"
+
+
+def test_uncorrected_plate_tilt_corrupts_the_zero():
+    """Documents the trap the --plate-tilt flag exists to avoid."""
+    pairs = synth_pairs(90.0, 1, 0.75, [40, 70, 90, 120, 150])
+    tilted = [[sv, a + 6.0] for sv, a in pairs]
+    got, _ = FC.fit_joint("shoulder", tilted, plate_tilt=0.0)
+    off = abs(got["fit"]["zero"] - 90.0)
+    assert off > 5.0, f"ignoring a 6 deg plate tilt should shift the zero, moved {off:.2f}"
+    assert abs(got["fit"]["gain"] - 0.75) < 0.001, "a pure offset must not disturb the gain"
+
+
+def test_fit_refuses_too_few_points():
+    got, err = FC.fit_joint("elbow", [[90, 0.0]])
+    assert got is None and "at least 2" in err
+
+
+def test_fit_refuses_a_joint_that_did_not_move():
+    got, err = FC.fit_joint("elbow", [[90, 5.0], [90, 5.0], [90, 5.0]])
+    assert got is None and err
+
+
+def test_marker_azimuths_match_the_shipped_marker_model():
+    """The base can be calibrated off the markers, so those azimuths must stay in step."""
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    for mid, az in FC.MARKER_AZIMUTH.items():
+        x, y = vis.markers[mid][:2]
+        assert abs(math.degrees(math.atan2(y, x)) - az) < 0.05, \
+            f"marker {mid}: vision.json says {math.degrees(math.atan2(y, x)):.2f}, "\
+            f"fit_servo_calibration says {az}"
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():

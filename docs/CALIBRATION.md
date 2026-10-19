@@ -108,9 +108,50 @@ negotiate a different mode.
 **Recalibrate whenever** the lens is touched, the zoom or focus changes, or you change
 capture resolution.
 
-## 2. Link lengths and joint zeros
+## 2. Joint zeros, gains and link lengths
 
-In `config.json`, or through the Calibrate tab's wizard.
+Each joint has **two** parameters worth calibrating, not one:
+
+```
+joint_angle = sign * (servo - zero) * gain
+```
+
+`gain` is degrees actually rotated per degree commanded. It is not 1.0 on this rig: the
+firmware drives counts 150-500 at 50 Hz, i.e. 732-2441 us, while an MG996R is nominally
+500-2500 us for 180 degrees - 85% of the pulse window before any per-unit shortfall. Measured
+base yaw is over-reported by about a third, implying a gain near 0.75.
+
+`zero` is the servo value at which the joint is truly at zero. It is also wrong here: at the
+pose the model calls all-zero, which should be straight up, the arm leans slightly forward -
+on a flat surface as well as the bolted slanted desk, so it is the arm and not the desk.
+
+**Calibrate both together**, because a single operating point cannot tell them apart. Measure
+each joint's actual angle at three or more spread-out servo values and fit a line:
+
+```
+python fit_servo_calibration.py --template          # creates servo_cal.json to fill in
+python fit_servo_calibration.py --plate-tilt 6.0    # fit and review
+python fit_servo_calibration.py --plate-tilt 6.0 --apply
+```
+
+For the pitch joints a phone inclinometer or a digital angle gauge taped to the link is
+accurate enough. For the base you need no protractor at all - the markers have known true
+azimuths, so jogging the tip onto each gives four reference points
+(`--base-from-markers` lists them).
+
+**The tilted-desk trap.** An inclinometer reads from gravity-vertical, but joint angles are
+defined relative to the base plate, which is bolted to a sloping desk. Measure the plate's own
+tilt and pass it as `--plate-tilt`, or the desk's slope is baked into every zero you fit.
+
+**After changing a zero, re-check the joint limits.** `min` and `max` are in servo units, so
+moving the zero moves where they actually land.
+
+The Calibrate tab's wizard still handles zero, sign and limits interactively, but it does not
+know about `gain` - prefer the script while the gains are unknown.
+
+### Link lengths
+
+In `config.json`:
 
 - `L0` table surface to shoulder axis height
 - `L1` shoulder axis to elbow axis
@@ -120,10 +161,14 @@ In `config.json`, or through the Calibrate tab's wizard.
 Measure between **axes of rotation**, not between visible edges of brackets. Then use the
 wizard to set each joint's `zero` and `sign` and creep to its real limits.
 
-Sanity check: command the tip to a few known points and measure where it actually goes
-with a ruler. Radial error that grows with reach means a link length is off; error that
-grows with yaw means a base zero or sign is off, or the servo pulse scale is (see
-HARDWARE.md).
+Measure with calipers between **axes of rotation**. Do not try to *infer* link lengths from
+tip positions while the zeros and gains are still wrong - they are coupled in their effect on
+the tip, and fitting one through the other's error gives a confident wrong answer. Measure
+them physically, fix the zeros and gains, and only then check the result against the known
+marker distances from the base axis: ID0 231.8 mm, ID1 227.9 mm, ID2 348.9 mm, ID3 353.0 mm.
+
+Reach correct at the near markers but not the far ones, or vice versa, means the gains still
+differ per joint and need measuring individually rather than assumed shared.
 
 ## 3. Tool centre point
 
