@@ -494,6 +494,109 @@ def test_homography_cannot_detect_a_bad_marker_model():
             "a homography always fits 4 points perfectly - that is the blindness being documented"
 
 
+# --------------------------------------------------- servo gain (commanded vs actual degrees)
+
+def cfg_gain(g, idx=None):
+    """Config with gain g on joint idx, or on all four arm joints when idx is None."""
+    c = S.load_cfg()
+    c["tool"] = {"along": 0.0, "perp": 0.0, "lateral": 0.0}
+    for i, j in enumerate(c["joints"]):
+        if idx is None or i == idx:
+            j["gain"] = g
+        else:
+            j["gain"] = 1.0
+    return c
+
+
+def test_unit_gain_changes_nothing():
+    """Default must reproduce the original kinematics exactly."""
+    servo = [120.0, 70.0, 120.0, 150.0, 90.0, 90.0]
+    base = S.load_cfg()
+    for j in base["joints"]:
+        j.pop("gain", None)                      # a config predating the gain field
+    assert np.allclose(S.joint_angles(servo, base), S.joint_angles(servo, cfg_gain(1.0)))
+    assert np.allclose(S.fk(servo, base)[0][-1], S.fk(servo, cfg_gain(1.0))[0][-1])
+
+
+def test_gain_scales_the_actual_angle():
+    servo = [120.0, 90.0, 90.0, 90.0, 90.0, 90.0]     # base 30 deg off its zero
+    full = S.joint_angles(servo, cfg_gain(1.0))[0]
+    part = S.joint_angles(servo, cfg_gain(0.75))[0]
+    assert abs(full - 30.0) < 1e-9
+    assert abs(part - 22.5) < 1e-9, f"0.75 gain on 30 deg commanded should give 22.5, got {part}"
+
+
+def test_an_unmodelled_gain_makes_the_arm_undershoot_the_commanded_yaw():
+    """The real-world failure: a command computed in ignorance of the gain sends the arm
+    somewhere else. Built from IK on a genuine forward target rather than a hand-picked
+    servo list, so the pose actually reaches over the table instead of folding behind
+    the base - where planar reach goes negative and azimuth wraps by 180 degrees.
+    """
+    want = (180.0, 120.0, 60.0, -80.0)      # verified cleanly reachable
+    naive_cfg = cfg_gain(1.0)
+    servo, reach, lim = S.ik(*want, naive_cfg, 90.0)
+    assert not (reach or lim), "test target must be cleanly reachable"
+    cmd = list(servo) + [90.0, 90.0]
+
+    believed = S.fk(cmd, naive_cfg)[0][-1]
+    assert math.dist(believed, want[:3]) < 1.0, "FK must agree with the IK that produced it"
+
+    actual = S.fk(cmd, cfg_gain(0.75, idx=0))[0][-1]
+    r = math.hypot(actual[0], actual[1])
+    assert r > 0, "pose must reach forward for the azimuth comparison to mean anything"
+
+    # a sub-unit base gain turns the arm less than asked, so it lands short of the commanded
+    # azimuth and nearer the centre line
+    assert abs(actual[1]) < abs(believed[1]), f"|Y| {abs(actual[1]):.1f} vs {abs(believed[1]):.1f}"
+    assert abs(math.degrees(math.atan2(actual[1], actual[0]))) < \
+           abs(math.degrees(math.atan2(believed[1], believed[0])))
+    assert math.dist(actual, believed) > 20.0, "a 25% yaw gain error should be plainly visible"
+
+
+def test_fk_planar_keeps_the_radius_signed_behind_the_base():
+    """A folded-back pose has negative planar reach; the TCP must not report it positive."""
+    servo = [130.0, 70.0, 120.0, 150.0, 90.0, 90.0]
+    cfg = cfg_gain(1.0)
+    chain = S.fk_planar(servo, cfg)
+    assert chain[4][0] < 0, "this pose should fold the L3 tip behind the base"
+    assert chain[-1][0] < 0, "the TCP radius must carry the same sign as the chain"
+    assert abs(chain[-1][0] - chain[4][0]) < 1e-9, "no tool offset, so TCP sits on the L3 tip"
+
+
+def test_ik_inverts_the_gain():
+    """IK must command a bigger angle to achieve the same pose through a lossy servo."""
+    for g in (1.0, 0.9, 0.75, 0.706):
+        cfg = cfg_gain(g)
+        for x, y, z, pitch in TARGETS:
+            servo, reach, lim = S.ik(x, y, z, pitch, cfg, 90.0)
+            if reach or lim:
+                continue
+            got = S.fk(list(servo) + [90.0, 90.0], cfg)[0][-1]
+            assert math.dist(got, (x, y, z)) < 1.0, \
+                f"gain {g}: asked ({x},{y},{z}) got {tuple(round(v, 1) for v in got)}"
+
+
+def test_ik_commands_a_larger_base_angle_at_lower_gain():
+    want = (200.0, 150.0, 60.0, -80.0)
+    hi = S.ik(*want, cfg_gain(1.0), 90.0)[0][0]
+    lo = S.ik(*want, cfg_gain(0.75), 90.0)[0][0]
+    zero = S.load_cfg()["joints"][0]["zero"]
+    assert abs(lo - zero) > abs(hi - zero), \
+        f"lower gain must need a bigger command: {lo} vs {hi} (zero {zero})"
+
+
+def test_zero_gain_is_treated_as_unity_rather_than_dividing_by_zero():
+    servo, reach, lim = S.ik(200.0, 100.0, 60.0, -80.0, cfg_gain(0.0), 90.0)
+    assert all(math.isfinite(v) for v in servo)
+
+
+def test_joint_ranges_report_actual_degrees():
+    wide = S.joint_ranges(cfg_gain(1.0))[0]
+    narrow = S.joint_ranges(cfg_gain(0.5))[0]
+    assert abs((narrow[1] - narrow[0]) - (wide[1] - wide[0]) * 0.5) < 1e-6, \
+        "halving the gain must halve the reachable angular span"
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():

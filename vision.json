@@ -1,24 +1,24 @@
 {
   "markers": {
-    "3": [
-      239.4,
-      -240.4,
-      5.4
+    "0": [
+      134.2,
+      189.0,
+      5.2
     ],
     "1": [
-      39.5,
-      -180.9,
+      109.2,
+      -200.0,
       5.0
     ],
     "2": [
-      221.4,
-      254.9,
+      285.2,
+      201.0,
       5.0
     ],
-    "0": [
-      52.7,
-      170.8,
-      5.2
+    "3": [
+      290.2,
+      -201.0,
+      5.4
     ]
   },
   "touched": {
@@ -73,5 +73,31 @@
     "1-3": 174.0,
     "2-3": 401.0
   },
-  "aruco_mm": 23.0
+  "aruco_mm": 23.0,
+  "cartesian": {
+    "note": "hand-measured 2026-10-19. along = base datum to the marker's perpendicular foot on the drawn centre line; across = perpendicular distance to that line; side +1 = robot's left. X = along + datum.",
+    "datum_mm": 33.2,
+    "datum_breakdown": {
+      "frame_lip_to_servo_edge": 2.5,
+      "servo_edge_to_rotation_axis": 30.7
+    },
+    "along_mm": {
+      "0": 101.0,
+      "1": 76.0,
+      "2": 252.0,
+      "3": 257.0
+    },
+    "across_mm": {
+      "0": 189.0,
+      "1": 200.0,
+      "2": 201.0,
+      "3": 201.0
+    },
+    "side": {
+      "0": 1,
+      "1": -1,
+      "2": 1,
+      "3": -1
+    }
+  }
 }

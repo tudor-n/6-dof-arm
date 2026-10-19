@@ -22,16 +22,22 @@ DEFAULT_CFG = {
               "L1": 105.0,   # shoulder axis -> elbow axis
               "L2": 100.0,   # elbow axis -> wrist-pitch axis
               "L3": 150.0},  # wrist-pitch axis -> gripper tip
-    # servo = zero + sign * joint_angle   (only first 4 joints use zero/sign)
+    # joint_angle = sign * (servo - zero) * gain
+    # gain is degrees of ACTUAL rotation per degree commanded. It is 1.0 only if the servo
+    # really sweeps its full nominal range over the pulse window the firmware uses, which a
+    # hobby servo generally does not: src/main.c drives counts 150-500 at 50 Hz, i.e.
+    # 732-2441 us, while an MG996R is nominally 500-2500 us for 180 deg. Any shortfall makes
+    # every commanded angle larger than the angle achieved, and forward kinematics - which
+    # only ever sees the command - then reports a pose the arm is not in.
     # low-stress rest pose, in JOINT angles (deg): upper arm ~vertical, forearm folded down/in, gripper tucked
     "rest": {"base": 0, "shoulder": -10, "elbow": 145, "wrist": 50},
     "joints": [
-        {"name": "base",        "zero": 90, "sign": 1, "min": 5,  "max": 175},
-        {"name": "shoulder",    "zero": 90, "sign": 1, "min": 15, "max": 165},
-        {"name": "elbow",       "zero": 90, "sign": 1, "min": 10, "max": 170},
-        {"name": "wrist pitch", "zero": 90, "sign": 1, "min": 10, "max": 170},
-        {"name": "wrist roll",  "zero": 90, "sign": 1, "min": 0,  "max": 180},
-        {"name": "gripper",     "zero": 90, "sign": 1, "min": 20, "max": 100},
+        {"name": "base", "gain": 1.0,        "zero": 90, "sign": 1, "min": 5,  "max": 175},
+        {"name": "shoulder", "gain": 1.0,    "zero": 90, "sign": 1, "min": 15, "max": 165},
+        {"name": "elbow", "gain": 1.0,       "zero": 90, "sign": 1, "min": 10, "max": 170},
+        {"name": "wrist pitch", "gain": 1.0, "zero": 90, "sign": 1, "min": 10, "max": 170},
+        {"name": "wrist roll", "gain": 1.0,  "zero": 90, "sign": 1, "min": 0,  "max": 180},
+        {"name": "gripper", "gain": 1.0,     "zero": 90, "sign": 1, "min": 20, "max": 100},
     ],
     # Tool centre point, measured from the END of L3 (mm). The grasp point of a real
     # gripper is not on the wrist-roll axis, so leaving these at zero makes the arm
@@ -57,8 +63,14 @@ def save_cfg(): CFG_PATH.write_text(json.dumps(S.cfg, indent=2))
 # ---------------- kinematics ----------------
 
 def joint_angles(servo, cfg):
+    """Actual joint angles in degrees, from the servo values that were commanded.
+
+    The gain is what separates the two: a servo that only turns 0.75 deg per commanded deg
+    leaves the arm less folded than the command implies, and FK computes the wrong pose from
+    a perfectly good command. Default 1.0 reproduces the original behaviour exactly.
+    """
     J = cfg["joints"]
-    return [J[i]["sign"] * (servo[i] - J[i]["zero"]) for i in range(4)]
+    return [J[i]["sign"] * (servo[i] - J[i]["zero"]) * J[i].get("gain", 1.0) for i in range(4)]
 
 def roll_angle(servo, cfg):
     """Wrist-roll joint angle in degrees. Joint 4, which joint_angles deliberately omits.
@@ -69,7 +81,7 @@ def roll_angle(servo, cfg):
     if len(servo) <= 4:
         return 0.0
     J = cfg["joints"][4]
-    return J["sign"] * (servo[4] - J["zero"])
+    return J["sign"] * (servo[4] - J["zero"]) * J.get("gain", 1.0)
 
 def has_tool(cfg):
     T = cfg.get("tool") or DEFAULT_TOOL
@@ -121,10 +133,16 @@ def fk(servo, cfg):
     return pts, (math.degrees(p) + 180) % 360 - 180
 
 def fk_planar(servo, cfg):
-    """Side-view chain in (radius, height). Last point is the TCP's radius and height."""
+    """Side-view chain in (radius, height). Last point is the TCP's radius and height.
+
+    The radial coordinate is SIGNED, like the rest of the chain: a folded-back pose puts the
+    tip behind the base and its radius goes negative. hypot() would report that as positive
+    and put a kink in the side view, so the TCP is projected onto the arm's radial direction
+    instead.
+    """
     yaw, p, planar, tcp = _chain(servo, cfg)
     out = [list(q) for q in planar]
-    out.append([math.hypot(tcp[0], tcp[1]), tcp[2]])
+    out.append([tcp[0] * math.cos(yaw) + tcp[1] * math.sin(yaw), tcp[2]])
     return out
 
 def ik(x, y, z, pitch, cfg, roll_servo=None):
@@ -164,7 +182,8 @@ def ik(x, y, z, pitch, cfg, roll_servo=None):
     servo, limited = [], False
     for i in range(4):
         J = cfg["joints"][i]
-        s = J["zero"] + J["sign"] * ang[i]
+        g = J.get("gain", 1.0) or 1.0        # a zero gain would be unusable, treat it as 1
+        s = J["zero"] + J["sign"] * ang[i] / g
         # Sort limits before clamping to handle inverted bounds (min > max)
         _lo, _hi = min(J["min"], J["max"]), max(J["min"], J["max"])
         c2 = max(_lo, min(_hi, s))
@@ -175,7 +194,9 @@ def ik(x, y, z, pitch, cfg, roll_servo=None):
 def joint_ranges(cfg):
     J = cfg["joints"]; R = []
     for i in range(4):
-        a = (J[i]["min"] - J[i]["zero"]) * J[i]["sign"]; b = (J[i]["max"] - J[i]["zero"]) * J[i]["sign"]
+        g = J[i].get("gain", 1.0)
+        a = (J[i]["min"] - J[i]["zero"]) * J[i]["sign"] * g
+        b = (J[i]["max"] - J[i]["zero"]) * J[i]["sign"] * g
         R.append((min(a, b), max(a, b)))
     return R
 
