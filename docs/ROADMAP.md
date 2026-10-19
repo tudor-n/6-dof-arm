@@ -63,8 +63,14 @@ Both ends lock MJPG.
 
 ### Corrected along the way
 
-The old hardcoded table plane (`PLANE_A/B/C = 0.1197 / 0.0573 / -14.35`) described a ~5 cm
-tilt across the workspace, and restoring it looked like an obvious fix. It is not.
+**Settled: the table plane was never the problem.** The post-bolting constants actually in
+use were `PLANE_A/B/C = 0.0086 / 0.0045 / 6.95`, which is near-flat and sits within 0.7 mm of
+the least-squares plane through the marker Z values - i.e. exactly what `_fit_plane()` now
+computes. The plane has agreed with the markers all along.
+
+The `0.1197 / 0.0573 / -14.35` set committed at HEAD is from *before* the base was bolted
+down, and described a ~5 cm tilt across the workspace. Restoring it looked like an obvious
+fix. It is not.
 
 That plane does not pass through the marker coordinates it shipped alongside:
 
@@ -102,23 +108,77 @@ prediction is that "solve" was always small and "in use" was large - i.e. the av
 corrupting a good solve. If both are large instead, the fault is in the marker coordinates
 or the intrinsics and the next two items become urgent.
 
-### 2. Ground truth the marker layout
+### 2. Fix forward kinematics  **(measured 2026-10-19 - FK is distorted)**
 
-**Nothing in this system has ever been checked against a ruler.** Every length is
-FK-derived, so an FK error is invisible by construction - the camera is fitted to the arm's
-own distorted space and the whole loop stays self-consistent while being wrong.
+The marker layout has now been tape-measured, and the arm-measured model is the wrong
+**shape**, not merely misplaced:
 
-Tape-measure the six pairwise marker centre distances and compare them against the stored
-object points. `apply_touched()` already prints exactly those pairwise distances, so the
-comparison is direct.
+| pair | tape | arm-measured model | diff |
+|---|---|---|---|
+| 0-1 (near edge) | 392 | 351.9 | **-40.1** |
+| 0-2 (left side) | 152 | 188.5 | +36.5 |
+| 0-3 (diagonal) | 420 | 451.6 | +31.6 |
+| 1-2 (diagonal) | 436 | 472.2 | +36.2 |
+| 1-3 (right side) | 174 | 208.6 | +34.6 |
+| 2-3 (far edge) | 401 | 495.6 | **+94.6** |
 
-The stored layout is a pronounced trapezoid - near edge about 352 mm, far edge about 496
-mm. The same shape is present in the original working configuration, so it is probably
-real, but "probably" is doing a lot of work for the one number everything else rests on.
+The real layout is a near-rectangle: near edge 392, far edge 401, ratio **1.02**. The
+arm-measured model is a strong trapezoid: 352 and 496, ratio **1.41**. The tape closes as a
+planar quadrilateral to 1.0 mm, so the measurements themselves are sound.
 
-If the tape disagrees, suspect the servo pulse mapping (HARDWARE.md): the firmware maps
-0-180 degrees onto 732-2441 microseconds, while MG996R are nominally 500-2500, so a
-commanded degree may not be an actual degree.
+Pairwise distances are invariant under rotation and translation, so no placement, trim or
+offset can reconcile these. Best-fit rigid placement of the true shape onto the measured
+points leaves **38 mm RMS** - 50 mm at the far markers, 22 mm at the near ones - so the
+distortion **grows with reach**. Allowing a uniform scale only improves it to 34 mm, which
+rules out a simple scale error.
+
+Note what this does to the camera. A rectangle viewed obliquely projects to a trapezoid, so
+handing solvePnP a trapezoidal model of a rectangular reality lets the solver absorb much of
+the error as **camera tilt**. That produces a modest reprojection figure while throwing every
+raycast off by centimetres, with the error growing across the table. It explains the original
+symptom pattern better than the rotation-averaging bug alone, and the two were compounding.
+
+**Mitigation already in place:** `markers_from_tape()` rebuilds the model with the measured
+shape, placed by rigidly fitting it onto the touched points. That makes the camera pose
+trustworthy, because solvePnP is far more sensitive to shape than to placement. The placement
+is still FK-derived, so expect a residual systematic offset of a few cm until the root cause
+is fixed. `tape_check()` now guards this permanently and complains at startup.
+
+**Root cause, still open.** Neither a pure radial error nor a pure yaw error fits the data:
+
+| marker | FK reach r | FK yaw |
+|---|---|---|
+| 0 | 178.7 | +72.85° |
+| 1 | 185.2 | -77.68° |
+| 2 | 337.6 | +49.02° |
+| 3 | 339.3 | -45.12° |
+
+Correcting the near edge needs `r` scaled **up** by 1.11; correcting the far edge needs it
+scaled **down** by 0.81. A single scale cannot do both, and the same contradiction appears if
+the error is attributed to yaw instead. So it is a coupled error - most likely link lengths
+**and** joint zeros together, since a shoulder or elbow zero error changes reach differently
+depending on how folded the arm is. Candidates, in order:
+
+1. **Link lengths**, measured between brackets rather than between axes of rotation.
+2. **Shoulder/elbow zeros**, which couple into reach non-linearly.
+3. **Servo pulse scale** (HARDWARE.md): 0-180° maps to 732-2441 µs while MG996R are
+   nominally 500-2500 µs, so a commanded degree may not be an actual degree.
+4. **Gravity sag at extension**, which a cheap arm has plenty of and which is inherently
+   reach-dependent - matching the observed pattern.
+5. **Tool offset**, still unmeasured, contaminating every touch differently by pitch.
+
+Settling this needs the direct measurement below.
+
+### 2b. Measure the markers in Cartesian coordinates
+
+The tape fixes the shape but not where it sits relative to the base, which is why the
+rebuilt model still carries the FK placement error. Eight numbers remove the arm from the
+loop entirely: with a square along the robot's centre line, measure each marker's distance
+**along** that line from the base rotation axis (X) and its **perpendicular** offset (Y).
+
+That makes the marker model pure ground truth, the camera pose fully independent of FK, and
+turns the remaining arm pointing error into something directly measurable - commanded versus
+actual, with a known-good reference to compare against.
 
 ### 3. Re-shoot the camera intrinsics
 

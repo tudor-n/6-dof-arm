@@ -79,10 +79,16 @@ Described facing the robot, so the operator's left is the robot's right:
 | 0 | right, nearer the robot | **left**, near the base |
 | 2 | right, nearer the operator | **left**, far from the base |
 
-The four markers form a quadrilateral, not a rectangle - the far edge is noticeably wider
-than the near edge. That asymmetry is recorded in `vision.json` and has been present since
-the first working configuration. It has never been checked against a tape measure; see
-ROADMAP.md.
+**Tape-measured 2026-10-19.** The four markers form a near-rectangle: near edge
+(0-1) 392 mm, far edge (2-3) 401 mm, sides 152 mm and 174 mm, diagonals 420 mm and 436 mm.
+Self-consistent as a planar quadrilateral to 1.0 mm.
+
+The ArUco black-square edge is **23 mm**.
+
+The arm-measured model in `vision.json` disagreed with this badly - it described a strong
+trapezoid, far edge 496 mm against the real 401 mm. That was the first independent check on
+forward kinematics this project had, and FK failed it. `tape_check()` now guards against it
+permanently, and the measurements live in `vision.json` under `tape`. See ROADMAP.md.
 
 The arm can physically touch all four markers, which is what makes arm-measured marker
 positions possible in the first place.

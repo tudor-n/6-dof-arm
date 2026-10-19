@@ -4,6 +4,7 @@
 of order means measuring one error with another.
 
 ```
+0. Tape-measure the markers    independent of EVERYTHING - the only external ground truth
 1. Camera intrinsics           independent of the arm
 2. Link lengths + joint zeros  independent of the camera
 3. Tool centre point           needs 2
@@ -17,6 +18,40 @@ If accuracy is wrong and you do not know why, do not start with trims. `x_trim`,
 `y_trim` and `z_grasp_offset` exist to absorb a few millimetres of residual. Using them
 to absorb centimetres hides the real fault, and the compensation stops working the moment
 anything moves.
+
+---
+
+## 0. Tape-measure the markers
+
+Measure all six distances between marker centres by hand and put them in `vision.json`
+under `tape` as `"<lo>-<hi>": mm`.
+
+This is the only number in the system that does not come from the arm. Every other length
+is FK-derived, so the camera ends up fitted to the arm's own distorted space and the whole
+loop stays self-consistent while being wrong. Without the tape, an FK error is invisible by
+construction.
+
+`tape_check()` runs at startup and compares the **shape** of the stored marker model against
+these distances. Pairwise distances do not change when a model is rotated or translated, so
+this isolates shape error from placement error - and a shape error cannot be fixed by a trim,
+an offset, or by moving the model.
+
+It matters because solvePnP is far more sensitive to shape than to placement. A rectangle
+viewed obliquely projects to a trapezoid, so a trapezoidal model of a rectangular reality
+gets partly absorbed as **camera tilt**: modest reprojection error, but every table
+coordinate wrong by centimetres, worsening across the workspace.
+
+If the check fails, **Camera tab -> Marker calibration -> Rebuild from tape**. That rebuilds
+the model with the measured shape, placed by rigidly fitting it onto the arm-touched points.
+The reported fit residual is how far forward kinematics is out; if it is more than ~10 mm,
+go do step 2 properly.
+
+Measure the ArUco black-square edge while you are there (`aruco_mm` in `vision.json`).
+
+**Better still**, if you can: measure each marker in Cartesian coordinates with a square
+along the robot's centre line - distance along the line from the base rotation axis (X) and
+perpendicular offset (Y). Eight numbers, and the marker model stops depending on the arm at
+all.
 
 ---
 
@@ -169,4 +204,6 @@ In order of increasing commitment:
 | Error grows with reach | Link lengths |
 | Error grows with yaw | Base joint zero or sign, or servo pulse scale (see HARDWARE.md) |
 | Everything was fine, then suddenly was not | The base was knocked. Re-run step 4 |
+| Marker model fails the tape check | FK is distorted. Rebuild from tape, then fix step 2 |
+| Grid skewed but reprojection looks acceptable | Classic wrong-marker-shape signature: the solver absorbed it as camera tilt. Run step 0 |
 | Reported resolution differs from calibration | Camera negotiated another mode; re-run step 1 |

@@ -34,33 +34,53 @@ changes break the UI" from anything camera-related.
 
 ---
 
-## 1. The one measurement that costs nothing (do it now)
+## 1. Rebuild the marker model from the tape  **(do this first)**
 
-**Tape-measure the six distances between marker centres.** No software involved. Write them
-down:
+The tape measurements are in and they changed the plan. Your arm-measured marker model is
+the wrong **shape**, not just misplaced:
 
-| pair | stored (mm) | your tape (mm) |
-|---|---|---|
-| 0 - 1 | 351.9 | |
-| 0 - 2 | 188.5 | |
-| 0 - 3 | 451.6 | |
-| 1 - 2 | 472.2 | |
-| 1 - 3 | 208.6 | |
-| 2 - 3 | 495.6 | |
+| pair | tape | model | diff |
+|---|---|---|---|
+| 0-1 (near edge) | 392 | 351.9 | **-40.1** |
+| 0-2 | 152 | 188.5 | +36.5 |
+| 0-3 | 420 | 451.6 | +31.6 |
+| 1-2 | 436 | 472.2 | +36.2 |
+| 1-3 | 174 | 208.6 | +34.6 |
+| 2-3 (far edge) | 401 | 495.6 | **+94.6** |
 
-This is the first independent check on forward kinematics this project has ever had.
-Everything else is FK-derived, so an FK error is currently invisible by construction.
+Your real layout is a near-rectangle (392 vs 401, ratio 1.02). The model thinks it is a
+strong trapezoid (352 vs 496, ratio 1.41). Your six measurements close as a planar
+quadrilateral to 1.0 mm, so the tape is sound and the arm is not.
 
-- **Agrees within ~5 mm** → the marker model is sound, and the pose fix is the whole story.
-- **Disagrees by 10 mm or more** → FK has a scale error. Prime suspect is the servo pulse
-  mapping: the firmware maps 0-180° onto 732-2441 µs, while MG996R are nominally
-  500-2500 µs, so a commanded degree may not be an actual degree. Tell me the numbers and
-  this becomes the next thing to fix.
+These are already saved in `vision.json`, so **the server will complain loudly at startup**
+until you rebuild. That is expected, not a fault.
 
-Also measure the ArUco black-square edge while you are there. It is needed later for the
-16-corner pose upgrade and has never been recorded.
+**Camera tab -> Marker calibration -> Rebuild from tape.** You should see:
 
----
+```
+tape shape closes to 1.0 mm | placed onto the arm-measured points with 38.3 mm RMS
+residual (per marker: 0:24, 1:22, 2:50, 3:48 mm)
+```
+
+Afterwards the tape-vs-model readout should show every pair within about 1 mm.
+
+**What this does and does not fix.** The model now has the correct *shape*, so the camera
+pose becomes trustworthy - solvePnP is far more sensitive to shape than to placement. The
+*placement* still comes from the arm, so expect a residual systematic offset of a couple of
+cm until forward kinematics is fixed. Judge the result on whether the grid is square and
+un-mirrored and whether clicking is self-consistent, not on absolute accuracy yet.
+
+The 38 mm residual - 50 mm at the far markers against 22 mm at the near ones - is the real
+headline: **FK error grows with reach.** `docs/ROADMAP.md` section 2 has the candidates and
+why neither a pure reach error nor a pure yaw error explains it on its own.
+
+### The eight numbers that would finish this
+
+The tape fixes shape but not where the shape sits relative to the base, which is why the
+placement error survives. With a carpenter's square along the robot's centre line, measure
+for each marker its distance **along** the centre line from the base rotation axis, and its
+**perpendicular** offset. Eight numbers, no arm involved, and the marker model stops
+depending on FK entirely. Send them over and I will wire them in.
 
 ## 2. Camera, no arm
 
@@ -225,7 +245,7 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.Co
 
 With these I can tell you immediately whether the diagnosis was right and what is next:
 
-1. The tape-measured marker distances from step 1.
+1. The `Rebuild from tape` output line, and the tape-vs-model readout afterwards.
 2. The status line from step 2, verbatim - both reprojection figures and the camera position.
 3. Whether the grid is still mirrored.
 4. Click accuracy at each of the four markers (clicked vs. stored coordinates).
