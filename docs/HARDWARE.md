@@ -30,11 +30,23 @@ joint jumps, not like a power problem.
 ## Geometry
 
 The arm is bolted to a desk. The desk slopes: the far side (against the wall, behind the
-arm) sits a few cm higher than the near side. **This slope does not appear in the arm's
-coordinate frame**, because the arm is bolted flat to that same sloping surface - the
-base plane and the table surface are parallel. The slope only matters for gravity, not
-for geometry. This caught us out once: the old hardcoded table plane encoded a large
-tilt that was really the base being tipped on dumbbells before it was bolted down.
+arm) sits a few cm higher than the near side.
+
+**This slope does not appear in the arm's coordinate frame.** The arm's +Z is normal to its
+base plate, not vertical - the frame is defined by the mounting, not by gravity. Bolting
+the base to the sloping desk tilts the entire coordinate frame along with the desk, and the
+markers sit on that same surface, so in arm coordinates the table is `z = constant`. The
+slope matters for gravity (servo sag, objects rolling) and not for geometry.
+
+The arm-measured marker heights agree: 5.0, 5.0, 5.2 and 5.4 mm, a 0.4 mm spread across a
+200 x 500 mm footprint.
+
+**This assumes the base plate ends up genuinely parallel to the desk, and the mounting does
+not guarantee it.** M5 screws in M6 holes give the plate room to shift, and the PETG spacers
+between the two aluminium plates can differ in height or compress unevenly under the nuts.
+Either tilts the base relative to the desk, and then the table *will* show a slope in arm
+coordinates. A warped desk does the same. Worth checking with a straightedge: the plate
+against the desk, and the desk against itself across the marker footprint.
 
 Base mounting: M5 screws through M6 holes, wide washers, nuts, and custom PETG spacers
 between the two aluminium plates. The oversized holes mean the base *can* shift if

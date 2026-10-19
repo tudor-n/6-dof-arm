@@ -63,11 +63,33 @@ Both ends lock MJPG.
 
 ### Corrected along the way
 
-The old hardcoded table plane (`PLANE_A/B/C`) described a ~5 cm tilt across the workspace,
-and restoring it looked like an obvious fix. It is not: the arm is now bolted flat to the
-table, so the base plane and the table surface are parallel and a near-flat plane in arm
-coordinates is *correct*. Those constants encoded the dumbbell-era base tilt. They are
-obsolete, and `fit_plane` deriving the plane from the markers is the right design.
+The old hardcoded table plane (`PLANE_A/B/C = 0.1197 / 0.0573 / -14.35`) described a ~5 cm
+tilt across the workspace, and restoring it looked like an obvious fix. It is not.
+
+That plane does not pass through the marker coordinates it shipped alongside:
+
+| marker | stored Z | old plane | disagreement |
+|---|---|---|---|
+| ID0 | 7.4 | 0.6 | 6.8 mm |
+| ID1 | 7.2 | -18.5 | **25.7 mm** |
+| ID2 | 10.4 | 25.5 | **-15.1 mm** |
+| ID3 | 7.5 | 1.4 | 6.1 mm |
+
+The markers are physically on the table. A faithful measurement of that surface would pass
+through them within a millimetre or two; this one misses by up to 26 mm. So it was never a
+measurement of the table - it was a correction surface, tuned until picks landed, absorbing
+camera-pose and forward-kinematics error along the way. That also explains why it stopped
+working the moment anything moved: it was compensating for errors specific to one setup.
+
+Separately, a near-flat plane in arm coordinates is what the geometry predicts anyway. The
+arm's +Z is normal to its base plate, not vertical, so bolting the base to the sloping desk
+tilts the whole coordinate frame with the desk - and the markers sit on that same surface.
+The desk's slope is real but does not appear in these coordinates; it matters for gravity,
+not for geometry. **This assumes the base plate really is parallel to the desk**, which the
+M5-in-M6 holes and the PETG spacers do not guarantee - see HARDWARE.md.
+
+Deriving the plane from the markers is therefore the right design, and the old constants
+are obsolete.
 
 ## Needs real hardware
 
