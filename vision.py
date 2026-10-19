@@ -149,8 +149,18 @@ class Vision:
         a, b, c = self.plane
         return a * x + b * y + c
 
-    def record_marker(self, mid, xyz):
-        self.touched[int(mid)] = [round(float(v), 1) for v in xyz]; self.save()
+    def record_marker(self, mid, xyz, pitch=None, roll=None):
+        """Store an arm-measured marker centre as [x, y, z, tool_pitch, roll_servo].
+
+        The tool pose is kept because the recorded point is only as good as the tool
+        model at that pose: touch four markers at four different wrist pitches and the
+        four Z values carry four different errors. Older 3-element entries still load.
+        """
+        rec = [round(float(v), 1) for v in xyz]
+        rec += [None if pitch is None else round(float(pitch), 1),
+                None if roll is None else round(float(roll), 1)]
+        self.touched[int(mid)] = rec
+        self.save()
 
     def apply_touched(self):
         t = self.touched
@@ -163,6 +173,20 @@ class Vision:
                 o = np.linalg.norm(np.subtract(DEFAULT_MARKERS[ids[a]][:2], DEFAULT_MARKERS[ids[b]][:2]))
                 n = np.linalg.norm(np.subtract(t[ids[a]][:2], t[ids[b]][:2]))
                 info.append(f"{ids[a]}<->{ids[b]}: old {o:.1f} mm, measured {n:.1f} mm (diff {n - o:+.1f})")
+        poses = [(v[3], v[4]) for v in t.values() if len(v) > 4 and v[3] is not None]
+        if len(poses) > 1:
+            ps = [q[0] for q in poses]
+            spread = max(ps) - min(ps)
+            if spread > 5.0:
+                info.append(f"WARNING: these markers were touched at tool pitches spanning "
+                            f"{spread:.0f} deg ({min(ps):.0f}..{max(ps):.0f}). Unless the tool offset "
+                            f"in config.json is correct, each Z carries a different error and the "
+                            f"fitted table plane will be wrong. Re-touch them all at one pitch.")
+            rs = [q[1] for q in poses if q[1] is not None]
+            if rs and max(rs) - min(rs) > 5.0:
+                info.append(f"WARNING: wrist roll varied by {max(rs) - min(rs):.0f} deg across these "
+                            f"recordings. A grasp point off the roll axis moves with roll, so the "
+                            f"measurements are not comparable.")
         if len(t) < len(DEFAULT_MARKERS):
             R, tr = fit_rigid_2d([DEFAULT_MARKERS[i][:2] for i in ids], [t[i][:2] for i in ids])
             dz = float(np.mean([t[i][2] - DEFAULT_MARKERS[i][2] for i in ids]))

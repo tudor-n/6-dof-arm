@@ -33,13 +33,23 @@ DEFAULT_CFG = {
         {"name": "wrist roll",  "zero": 90, "sign": 1, "min": 0,  "max": 180},
         {"name": "gripper",     "zero": 90, "sign": 1, "min": 20, "max": 100},
     ],
+    # Tool centre point, measured from the END of L3 (mm). The grasp point of a real
+    # gripper is not on the wrist-roll axis, so leaving these at zero makes the arm
+    # report a tip it does not have - and because wrist roll spins the tool about its
+    # own axis, the error changes with roll. Measure them once (see docs/HARDWARE.md).
+    "tool": {"along": 0.0,      # further along the tool axis, beyond L3
+             "perp": 0.0,       # perpendicular to the tool axis, in the arm's plane at roll zero
+             "lateral": 0.0},   # out of the arm's plane at roll zero
 }
+DEFAULT_TOOL = DEFAULT_CFG["tool"]
 
 def load_cfg():
     cfg = copy.deepcopy(DEFAULT_CFG)
     if CFG_PATH.exists():
         try: cfg.update(json.loads(CFG_PATH.read_text()))
         except Exception as e: print("config.json unreadable, using defaults:", e)
+    # update() is shallow, so a config.json carrying only some tool keys would drop the rest
+    cfg["tool"] = {**DEFAULT_TOOL, **(cfg.get("tool") or {})}
     return cfg
 
 def save_cfg(): CFG_PATH.write_text(json.dumps(S.cfg, indent=2))
@@ -50,33 +60,94 @@ def joint_angles(servo, cfg):
     J = cfg["joints"]
     return [J[i]["sign"] * (servo[i] - J[i]["zero"]) for i in range(4)]
 
-def fk(servo, cfg):
+def roll_angle(servo, cfg):
+    """Wrist-roll joint angle in degrees. Joint 4, which joint_angles deliberately omits.
+
+    ik() returns only the four arm joints, so tolerate a short list by reporting zero
+    roll rather than raising - a chain without a roll value simply has no tool rotation.
+    """
+    if len(servo) <= 4:
+        return 0.0
+    J = cfg["joints"][4]
+    return J["sign"] * (servo[4] - J["zero"])
+
+def has_tool(cfg):
+    T = cfg.get("tool") or DEFAULT_TOOL
+    return any(T.get(k, 0.0) for k in ("along", "perp", "lateral"))
+
+def tool_offset(yaw, p, roll, cfg):
+    """Displacement from the end of L3 to the tool centre point, in base-frame mm.
+
+    Tool triad: a runs along the tool axis (the wrist-pitch direction), n is perpendicular
+    to it inside the arm's radial plane, b is out of that plane. Wrist roll spins the tool
+    about a, so the perp/lateral pair rotates within the (n, b) basis - which is why a
+    grasp point that is off the roll axis moves when the wrist rolls. All angles in radians.
+    """
+    T = cfg.get("tool") or DEFAULT_TOOL
+    along, perp, lat = T.get("along", 0.0), T.get("perp", 0.0), T.get("lateral", 0.0)
+    if not (along or perp or lat):
+        return (0.0, 0.0, 0.0)
+    cy, sy = math.cos(yaw), math.sin(yaw)
+    cp, sp = math.cos(p), math.sin(p)
+    cr, sr = math.cos(roll), math.sin(roll)
+    a = (cp * cy, cp * sy, sp)          # along the tool axis
+    n = (-sp * cy, -sp * sy, cp)        # perpendicular to it, in the arm's plane
+    b = (-sy, cy, 0.0)                  # out of the arm's plane
+    kn = perp * cr - lat * sr
+    kb = perp * sr + lat * cr
+    return tuple(along * a[i] + kn * n[i] + kb * b[i] for i in range(3))
+
+def _chain(servo, cfg):
+    """Planar link chain, tool pitch and the 3D tool point. Shared by fk and fk_planar."""
     L = cfg["links"]
     yaw, al, be, ga = [math.radians(a) for a in joint_angles(servo, cfg)]
+    roll = math.radians(roll_angle(servo, cfg))
     a1 = math.pi / 2 - al; a2 = a1 - be; p = a2 - ga
     sh = (0.0, L["L0"])
     el = (sh[0] + L["L1"] * math.cos(a1), sh[1] + L["L1"] * math.sin(a1))
     wr = (el[0] + L["L2"] * math.cos(a2), el[1] + L["L2"] * math.sin(a2))
     tip = (wr[0] + L["L3"] * math.cos(p), wr[1] + L["L3"] * math.sin(p))
-    pts = [[r * math.cos(yaw), r * math.sin(yaw), z] for r, z in [(0, 0), sh, el, wr, tip]]
-    pitch = (math.degrees(p) + 180) % 360 - 180
-    return pts, pitch
+    ox, oy, oz = tool_offset(yaw, p, roll, cfg)
+    tcp = (tip[0] * math.cos(yaw) + ox, tip[0] * math.sin(yaw) + oy, tip[1] + oz)
+    return yaw, p, [(0.0, 0.0), sh, el, wr, tip], tcp
+
+def fk(servo, cfg):
+    """Returns ([base, shoulder, elbow, wrist, L3 tip, TOOL POINT], tool pitch).
+    The last point is the TCP, which is what every caller should aim at; with no tool
+    offset configured it coincides with the L3 tip and this matches the old behaviour."""
+    yaw, p, planar, tcp = _chain(servo, cfg)
+    pts = [[r * math.cos(yaw), r * math.sin(yaw), z] for r, z in planar]
+    pts.append([tcp[0], tcp[1], tcp[2]])
+    return pts, (math.degrees(p) + 180) % 360 - 180
 
 def fk_planar(servo, cfg):
-    L = cfg["links"]
-    _, al, be, ga = [math.radians(a) for a in joint_angles(servo, cfg)]
-    a1 = math.pi / 2 - al; a2 = a1 - be; p = a2 - ga
-    sh = (0.0, L["L0"]); el = (L["L1"] * math.cos(a1), sh[1] + L["L1"] * math.sin(a1))
-    wr = (el[0] + L["L2"] * math.cos(a2), el[1] + L["L2"] * math.sin(a2))
-    tip = (wr[0] + L["L3"] * math.cos(p), wr[1] + L["L3"] * math.sin(p))
-    return [[0.0, 0.0], list(sh), list(el), list(wr), list(tip)]
+    """Side-view chain in (radius, height). Last point is the TCP's radius and height."""
+    yaw, p, planar, tcp = _chain(servo, cfg)
+    out = [list(q) for q in planar]
+    out.append([math.hypot(tcp[0], tcp[1]), tcp[2]])
+    return out
 
-def ik(x, y, z, pitch, cfg):
+def ik(x, y, z, pitch, cfg, roll_servo=None):
+    """Solve the arm so the TOOL CENTRE POINT lands on (x, y, z) at the given tool pitch.
+
+    The tool offset depends on base yaw, and yaw depends on the solution, so the offset is
+    resolved by fixed-point iteration - a few passes suffice because the offset is small
+    next to the reach. roll_servo is the wrist-roll servo value the arm will be at (the
+    offset rotates with it); None means roll zero. With no tool offset configured the
+    iteration is skipped and this is exactly the original closed-form solve.
+    """
     L = cfg["links"]; L0, L1, L2, L3 = L["L0"], L["L1"], L["L2"], L["L3"]
-    r = math.hypot(x, y)
-    yaw = math.atan2(y, x) if r > 1e-6 else 0.0
     p = math.radians(pitch)
-    wr = r - L3 * math.cos(p); wz = z - L0 - L3 * math.sin(p)
+    J4 = cfg["joints"][4]
+    roll = math.radians(J4["sign"] * ((J4["zero"] if roll_servo is None else roll_servo) - J4["zero"]))
+    tx, ty, tz = x, y, z
+    for _ in range(4 if has_tool(cfg) else 0):
+        yaw_i = math.atan2(ty, tx) if math.hypot(tx, ty) > 1e-6 else 0.0
+        ox, oy, oz = tool_offset(yaw_i, p, roll, cfg)
+        tx, ty, tz = x - ox, y - oy, z - oz
+    r = math.hypot(tx, ty)
+    yaw = math.atan2(ty, tx) if r > 1e-6 else 0.0
+    wr = r - L3 * math.cos(p); wz = tz - L0 - L3 * math.sin(p)
     d = math.hypot(wr, wz); reach = False
     hi = (L1 + L2) * 0.9995; lo = abs(L1 - L2) + 1e-3
     if d > hi: wr, wz, reach = wr * hi / d, wz * hi / d, True
@@ -108,7 +179,7 @@ def joint_ranges(cfg):
         R.append((min(a, b), max(a, b)))
     return R
 
-def ik_auto(x, y, z, p0, cfg):
+def ik_auto(x, y, z, p0, cfg, roll_servo=None):
     """Tries the exact target first. If that is impossible it SHRINKS the target toward the base (up to ~66%)
     and/or changes the tool pitch. The second return value is True when the target was changed."""
     L0 = cfg["links"]["L0"]
@@ -120,9 +191,9 @@ def ik_auto(x, y, z, p0, cfg):
             for sg in ((1, -1) if dp else (1,)):
                 p = p0 + sg * dp
                 if p > 180 or p < -180: continue
-                servo, reach, lim = ik(xx, yy, zz, p, cfg)
+                servo, reach, lim = ik(xx, yy, zz, p, cfg, roll_servo)
                 if not reach and not lim: return servo, i > 0, False
-    servo, reach, lim = ik(x, y, z, p0, cfg)
+    servo, reach, lim = ik(x, y, z, p0, cfg, roll_servo)
     return servo, True, lim
 
 # ---------------- state ----------------
@@ -160,7 +231,7 @@ def tool_state():
 
 def solve():
     t = S.tool
-    servo, S.reach, S.limited = ik(t["x"], t["y"], t["z"], t["pitch"], S.cfg)
+    servo, S.reach, S.limited = ik(t["x"], t["y"], t["z"], t["pitch"], S.cfg, S.tgt[4])
     S.tgt[:4] = servo
 
 def move_tip(x, y, z, lock=False, pitch=None, who="tip", strict=False, verbose=True):
@@ -169,7 +240,8 @@ def move_tip(x, y, z, lock=False, pitch=None, who="tip", strict=False, verbose=T
     zr = z
     x, z = max(0.0, x), max(0.0, z)          # same clamps as before
     p0 = fk(S.tgt, S.cfg)[1] if pitch is None else pitch
-    servo, reach, lim = ik(x, y, z, p0, S.cfg) if lock else ik_auto(x, y, z, p0, S.cfg)
+    roll = S.tgt[4]          # the tool offset rotates with wrist roll, so IK needs it
+    servo, reach, lim = ik(x, y, z, p0, S.cfg, roll) if lock else ik_auto(x, y, z, p0, S.cfg, roll)
     old = S.tgt[:4]; S.tgt[:4] = servo
     got, gp = fk(S.tgt, S.cfg); gx, gy, gz = got[-1]
     err = max(abs(gx - x), abs(gy - y), abs(gz - z))
@@ -216,6 +288,11 @@ def do_stop():
 
 def start_pick(x, y, closing):
     if V is None: log("Pick needs the camera/vision module.", "err"); return
+    ok, why = V.pose_health()
+    if not ok:
+        log(f"Pick refused: {why}. Driving the arm from an unreliable pose is how objects get "
+            "missed by centimetres - fix the pose first.", "err")
+        return
     if S.pick_task and not S.pick_task.done(): log("A pick is already running (press STOP to cancel).", "warn"); return
     S.pick_task = asyncio.create_task(pick_seq(x, y, closing))
 
@@ -254,8 +331,13 @@ def record_marker(mid):
     if not S.live: log("Turn Live ON, jog the tip onto the marker centre, then record.", "err"); return
     if max(abs(S.tgt[i] - S.cur[i]) for i in range(5)) > 1.0: log("Arm is still moving - wait, then record.", "warn"); return
     pts, pitch = fk(S.cur, S.cfg); x, y, z = pts[-1]
-    V.record_marker(mid, (x, y, z))
-    log(f"Marker {mid} recorded: tip at X={x:.1f} Y={y:.1f} Z={z:.1f} (tool pitch {pitch:.0f})", "ok")
+    V.record_marker(mid, (x, y, z), pitch, S.cur[4])
+    log(f"Marker {mid} recorded: tool point X={x:.1f} Y={y:.1f} Z={z:.1f} "
+        f"(tool pitch {pitch:.0f}, roll servo {S.cur[4]:.0f})", "ok")
+    if not has_tool(S.cfg):
+        log("note: config.json has no tool offset, so this is the L3 centreline point, not the "
+            "real grasp point. Touch every marker at the SAME wrist pitch and roll until the "
+            "tool is measured, or the four Z values will not describe one plane.", "warn")
 
 def push_limits():
     if S.ser is None: return
@@ -449,11 +531,20 @@ async def handle(ws, m):
         log("Vision is not running (camera files missing, --no-camera, or OpenCV not installed).", "err")
     elif t == "cam_click":
         r = V.click_at(float(m["u"]), float(m["v"]))
-        if r: log(f"click -> table X={r['x']:.1f} Y={r['y']:.1f} (table z {r['z']:.1f})")
+        if r:
+            ok, why = V.pose_health()
+            log(f"click -> table X={r['x']:.1f} Y={r['y']:.1f} (table z {r['z']:.1f})"
+                + ("" if ok else f"  [UNRELIABLE: {why}]"), "info" if ok else "warn")
         else: log("click ignored: camera pose is not found yet (all 4 markers must be visible).", "warn")
     elif t == "goto_click":
         if V.click is None: log("Click a point on the video first.", "warn")
         else:
+            # Deliberately only a warning: driving to where the software thinks a point is
+            # is how you diagnose a bad pose. The descending, gripper-closing pick sequence
+            # is the dangerous one, and start_pick refuses outright.
+            ok, why = V.pose_health()
+            if not ok: log(f"heads up: {why} - the arm is going where the software THINKS you "
+                           "clicked, which may not be where you clicked.", "warn")
             x, y = V.click[0], V.click[1]; tz = V.table_z(x, y)
             z = tz + V.s["hover"] if m.get("mode") == "hover" else max(V.s["z_floor"], tz + V.s["z_grasp_offset"])
             move_tip(x, y, z, pitch=V.s["pick_pitch"], who="go to click (" + str(m.get("mode")) + ")")

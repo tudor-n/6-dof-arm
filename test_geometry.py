@@ -289,25 +289,42 @@ def test_perp_offset_is_perpendicular_to_the_tool_axis():
     assert abs(np.linalg.norm(b - a) - 40.0) < 1e-6
 
 
-def test_ik_fk_round_trip_with_a_tool_offset():
-    cfg = cfg_with(along=12.0, perp=30.0, lateral=0.0)
-    for x, y, z, pitch in [(220.0, 0.0, 60.0, -90.0), (180.0, 120.0, 90.0, -60.0),
-                           (160.0, -140.0, 40.0, -90.0), (260.0, 40.0, 120.0, -45.0)]:
-        servo, reach, lim = S.ik(x, y, z, pitch, cfg)
+TARGETS = [(220.0, 0.0, 60.0, -90.0), (180.0, 120.0, 90.0, -60.0),
+           (160.0, -140.0, 40.0, -90.0), (260.0, 40.0, 120.0, -45.0)]
+
+
+def round_trip(cfg, roll_servo):
+    """IK a TCP target, FK the answer back, return the worst miss in mm.
+
+    ik() yields only the four arm joints, so the roll it solved for has to be put back
+    before fk() can reproduce the same tool point.
+    """
+    worst, tested = 0.0, 0
+    for x, y, z, pitch in TARGETS:
+        servo, reach, lim = S.ik(x, y, z, pitch, cfg, roll_servo)
         if reach or lim:
             continue
-        got = S.fk(servo, cfg)[0][-1]
-        assert math.dist(got, (x, y, z)) < 1.0, \
-            f"IK/FK round trip missed ({x},{y},{z}) -> {tuple(round(v, 1) for v in got)}"
+        got = S.fk(list(servo) + [roll_servo, 90.0], cfg)[0][-1]
+        worst = max(worst, math.dist(got, (x, y, z)))
+        tested += 1
+    assert tested, "no target was reachable - the round trip tested nothing"
+    return worst
+
+
+def test_ik_fk_round_trip_with_a_tool_offset():
+    """A rolled, offset tool is the case the old centreline-only model could not express."""
+    assert round_trip(cfg_with(along=12.0, perp=30.0, lateral=8.0), 120.0) < 1.0
+
+
+def test_ik_fk_round_trip_across_the_roll_range():
+    cfg = cfg_with(along=12.0, perp=30.0, lateral=8.0)
+    for roll in (0.0, 45.0, 90.0, 135.0, 180.0):
+        assert round_trip(cfg, roll) < 1.0, f"round trip broke at roll {roll}"
 
 
 def test_ik_round_trip_still_works_without_a_tool_offset():
-    cfg = cfg_with(along=0.0, perp=0.0, lateral=0.0)
-    for x, y, z, pitch in [(220.0, 0.0, 60.0, -90.0), (180.0, 120.0, 90.0, -60.0)]:
-        servo, reach, lim = S.ik(x, y, z, pitch, cfg)
-        if reach or lim:
-            continue
-        assert math.dist(S.fk(servo, cfg)[0][-1], (x, y, z)) < 1.0
+    assert round_trip(cfg_with(along=0.0, perp=0.0, lateral=0.0), 90.0) < 1.0
+
 
 
 def test_joint_angles_still_reports_four_arm_joints():
