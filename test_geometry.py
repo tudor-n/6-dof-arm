@@ -289,8 +289,31 @@ def test_perp_offset_is_perpendicular_to_the_tool_axis():
     assert abs(np.linalg.norm(b - a) - 40.0) < 1e-6
 
 
-TARGETS = [(220.0, 0.0, 60.0, -90.0), (180.0, 120.0, 90.0, -60.0),
-           (160.0, -140.0, 40.0, -90.0), (260.0, 40.0, 120.0, -45.0)]
+def reachable_targets(cfg, want=4, roll=90.0):
+    """Targets the CURRENT calibration can actually hit.
+
+    Hardcoding these breaks every time a joint is calibrated, because a better model has a
+    smaller and differently-shaped workspace than an optimistic one. Searching keeps the
+    round-trip tests testing the round trip rather than the workspace.
+    """
+    out = []
+    for r in (180.0, 210.0, 240.0, 270.0, 300.0):
+        for y_frac in (0.0, 0.4, -0.4):
+            for z in (40.0, 80.0, 120.0):
+                for pitch in (-90.0, -60.0, -30.0):
+                    y = r * y_frac
+                    x = math.sqrt(max(0.0, r * r - y * y))
+                    servo, reach, lim = S.ik(x, y, z, pitch, cfg, roll)
+                    if not reach and not lim:
+                        out.append((round(x, 1), round(y, 1), z, pitch))
+                        break
+                if len(out) >= want:
+                    return out
+    assert out, "no reachable target at all - the calibration may be broken"
+    return out
+
+
+TARGETS = reachable_targets(S.load_cfg())
 
 
 def round_trip(cfg, roll_servo):
@@ -300,7 +323,7 @@ def round_trip(cfg, roll_servo):
     before fk() can reproduce the same tool point.
     """
     worst, tested = 0.0, 0
-    for x, y, z, pitch in TARGETS:
+    for x, y, z, pitch in reachable_targets(cfg, roll=roll_servo):
         servo, reach, lim = S.ik(x, y, z, pitch, cfg, roll_servo)
         if reach or lim:
             continue
@@ -531,6 +554,7 @@ def test_unit_gain_changes_nothing():
     """Default must reproduce the original kinematics exactly."""
     servo = [120.0, 70.0, 120.0, 150.0, 90.0, 90.0]
     base = S.load_cfg()
+    base["tool"] = {"along": 0.0, "perp": 0.0, "lateral": 0.0}   # cfg_gain zeroes it too
     for j in base["joints"]:
         j.pop("gain", None)                      # a config predating the gain field
     assert np.allclose(S.joint_angles(servo, base), S.joint_angles(servo, cfg_gain(1.0)))
@@ -577,9 +601,18 @@ def test_an_unmodelled_gain_makes_the_arm_undershoot_the_commanded_yaw():
 
 def test_fk_planar_keeps_the_radius_signed_behind_the_base():
     """A folded-back pose has negative planar reach; the TCP must not report it positive."""
-    servo = [130.0, 70.0, 120.0, 150.0, 90.0, 90.0]
     cfg = cfg_gain(1.0)
-    chain = S.fk_planar(servo, cfg)
+    # search for a pose that folds behind the base under the current calibration
+    chain = None
+    for sh in range(20, 170, 5):
+        for el in range(10, 170, 5):
+            c = S.fk_planar([90.0, float(sh), float(el), 150.0, 90.0, 90.0], cfg)
+            if c[4][0] < -20:
+                chain = c
+                break
+        if chain:
+            break
+    assert chain is not None, "no folded-back pose found under this calibration"
     assert chain[4][0] < 0, "this pose should fold the L3 tip behind the base"
     assert chain[-1][0] < 0, "the TCP radius must carry the same sign as the chain"
     assert abs(chain[-1][0] - chain[4][0]) < 1e-9, "no tool offset, so TCP sits on the L3 tip"
@@ -1003,7 +1036,8 @@ def test_two_poses_at_the_same_wrist_pitch_are_refused():
     poses = synth_marker_poses([0.0, 3.0], markers, links)   # only 3 deg apart
     assert len(poses) == 8
     P, why = FC.fit_pitch_joints(poses, markers, links, PITCH_SIGNS)
-    assert P is None and "same wrist pitch" in why
+    assert P is None
+    assert "no marker was touched at wrist pitches" in why, why
 
 
 def test_two_well_separated_pitches_recover_the_rig():

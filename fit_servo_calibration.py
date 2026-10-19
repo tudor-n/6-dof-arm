@@ -241,11 +241,28 @@ def fit_pitch_joints(poses, markers, links, signs, l3_fixed=None):
                       "cannot separate the shoulder, elbow and wrist: the fit looks excellent "
                       "on the measured points and is about 154 mm wrong everywhere else. "
                       "Touch each marker again with the wrist at a clearly different pitch.")
-    flat = [m for m, w in per_marker.items() if len(w) >= 2 and max(w) - min(w) < 15.0]
-    if flat:
-        return None, (f"markers {sorted(flat)} were touched more than once but at nearly the "
-                      "same wrist pitch, which adds no information. Vary the wrist by at "
-                      "least 20 deg between touches.")
+    seps = {m: max(w) - min(w) for m, w in per_marker.items()}
+    if max(seps.values()) < 15.0:
+        return None, (f"no marker was touched at wrist pitches more than {max(seps.values()):.0f} "
+                      "deg apart. Repeating a pose adds observations but no information, so "
+                      "the shoulder, elbow and wrist stay inseparable. Vary the wrist by 25-30 "
+                      "deg between touches of the same marker.")
+    warn = []
+    thin_sep = sorted(m for m, v in seps.items() if v < 20.0)
+    if thin_sep:
+        warn.append(f"markers {thin_sep} were touched at wrist pitches only "
+                    f"{', '.join(f'{seps[m]:.0f}' for m in thin_sep)} deg apart. Simulation puts "
+                    "this design near 28 mm of tip error against about 10 mm at 28 deg "
+                    "separation - usable, but re-touching those with a bigger wrist change "
+                    "would roughly halve it.")
+
+    rolls = {float(q["servo"][4]) for q in poses if len(q["servo"]) > 4}
+    if len(rolls) > 1:
+        warn.append(f"wrist roll was not constant across these touches ({sorted(rolls)}). If the "
+                    "grasp point sits off the roll axis, rolling physically moves the fingertip, "
+                    "so the touches do not share one tool geometry. That is a hidden variable "
+                    "this planar fit cannot see - simulation says it costs about 10 mm. Keep the "
+                    "roll fixed next time.")
 
     free = [k for k in PITCH_KEYS if not (l3_fixed is not None and k == "l3")]
     fixed = {"l3": float(l3_fixed)} if l3_fixed is not None else {}
@@ -297,7 +314,7 @@ def fit_pitch_joints(poses, markers, links, signs, l3_fixed=None):
         pr, pz = _chain_rz(P, sv, links, signs)
         per_pose.append(math.hypot(pr - r, pz - z))
     return P, {"rms": math.sqrt(cost / (2 * len(obs))), "worst": max(per_pose),
-               "n": len(obs), "per_pose": per_pose}
+               "n": len(obs), "per_pose": per_pose, "warn": warn}
 
 
 def main():

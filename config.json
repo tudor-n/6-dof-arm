@@ -22,27 +22,27 @@
     },
     {
       "name": "shoulder",
-      "zero": 90,
+      "zero": 66.74,
       "sign": 1,
       "min": 161.5,
       "max": 15.6,
-      "gain": 1.0
+      "gain": 0.7109
     },
     {
       "name": "elbow",
-      "zero": 89.5,
+      "zero": 81.98,
       "sign": -1,
       "min": 171.5,
       "max": 6.5,
-      "gain": 1.0
+      "gain": 0.7577
     },
     {
       "name": "wrist pitch",
-      "zero": 180.0,
+      "zero": 236.72,
       "sign": -1,
       "min": 180.0,
       "max": 49.5,
-      "gain": 1.0
+      "gain": 0.6307
     },
     {
       "name": "wrist roll",
@@ -62,7 +62,7 @@
     }
   ],
   "tool": {
-    "along": 0.0,
+    "along": 26.4,
     "perp": 0.0,
     "lateral": 0.0
   }
