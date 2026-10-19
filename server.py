@@ -625,6 +625,9 @@ async def handle(ws, m):
     elif t == "jaws":
         r = world_to_servo_roll(float(m["angle"]), tip_azimuth()); S.tgt[4] = r
         log(f"jaws -> close along {float(m['angle']):.0f} deg (table), arm azimuth {tip_azimuth():.0f} -> roll servo {r:.0f}")
+    else:
+        # usually a page newer than this server: restart server.py after pulling UI changes
+        log(f"unknown message type {t!r} - is server.py older than the page? restart it", "warn")
 
 def client_gone(c):
     S.clients.discard(c)
