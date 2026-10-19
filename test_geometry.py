@@ -538,10 +538,13 @@ def test_unit_gain_changes_nothing():
 
 
 def test_gain_scales_the_actual_angle():
-    servo = [120.0, 90.0, 90.0, 90.0, 90.0, 90.0]     # base 30 deg off its zero
+    # derive the servo value from the configured zero rather than hardcoding one: the base
+    # zero is a measured quantity and has already moved once (90 -> 97.56)
+    zero = S.load_cfg()["joints"][0]["zero"]
+    servo = [zero + 30.0, 90.0, 90.0, 90.0, 90.0, 90.0]      # 30 deg commanded off zero
     full = S.joint_angles(servo, cfg_gain(1.0))[0]
     part = S.joint_angles(servo, cfg_gain(0.75))[0]
-    assert abs(full - 30.0) < 1e-9
+    assert abs(full - 30.0) < 1e-9, f"unit gain on 30 deg commanded should give 30, got {full}"
     assert abs(part - 22.5) < 1e-9, f"0.75 gain on 30 deg commanded should give 22.5, got {part}"
 
 

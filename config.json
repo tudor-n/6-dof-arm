@@ -14,11 +14,11 @@
   "joints": [
     {
       "name": "base",
-      "zero": 90.0,
+      "zero": 97.56,
       "sign": 1,
       "min": 5,
       "max": 175,
-      "gain": 1.0
+      "gain": 0.7635
     },
     {
       "name": "shoulder",
