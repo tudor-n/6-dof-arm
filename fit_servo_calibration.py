@@ -52,6 +52,8 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
+
 HERE = Path(__file__).parent
 CAL_PATH = HERE / "servo_cal.json"
 CFG_PATH = HERE / "config.json"
@@ -60,6 +62,13 @@ CFG_PATH = HERE / "config.json"
 MARKER_AZIMUTH = {0: +54.62, 1: -61.37, 2: +35.17, 3: -34.71}
 
 PITCH_JOINTS = {"shoulder", "elbow", "wrist pitch"}
+
+# Fitting the three pitch joints from marker touches needs poses that disagree about more
+# than where the tip ended up. Touching each marker once leaves the shoulder, elbow and wrist
+# contributions indistinguishable - simulation puts the resulting tip prediction error at
+# ~154 mm, worse than not calibrating. Touching each marker at a SECOND wrist pitch brings it
+# to ~8 mm, and adding a raised pose per marker to ~6 mm. Hence the hard refusal below.
+MIN_POSES_PER_MARKER = 2
 
 TEMPLATE = {
     "_how": "Each entry is [commanded servo value, measured actual joint angle in degrees]. "
@@ -184,6 +193,113 @@ def fit_joint(name, pairs, plate_tilt=0.0):
     return {"fit": out, "r2": r2, "worst": worst, "n": len(pts), "notes": notes}, None
 
 
+# --------------------------------------------------------------- pitch joints from markers
+
+PITCH_KEYS = ["zs", "gs", "ze", "ge", "zw", "gw", "l3"]
+
+
+def _chain_rz(P, servo, links, signs):
+    """Planar tip (radius, height) for one pose under trial parameters."""
+    L0, L1, L2 = links["L0"], links["L1"], links["L2"]
+    a1 = math.radians(90.0 - signs[0] * (servo[1] - P["zs"]) * P["gs"])
+    a2 = a1 - math.radians(signs[1] * (servo[2] - P["ze"]) * P["ge"])
+    pp = a2 - math.radians(signs[2] * (servo[3] - P["zw"]) * P["gw"])
+    return (L1 * math.cos(a1) + L2 * math.cos(a2) + P["l3"] * math.cos(pp),
+            L0 + L1 * math.sin(a1) + L2 * math.sin(a2) + P["l3"] * math.sin(pp))
+
+
+def fit_pitch_joints(poses, markers, links, signs, l3_fixed=None):
+    """Least-squares fit of the three pitch joints from tip touches at known 3D points.
+
+    poses: [{"marker": id, "servo": [base, shoulder, elbow, wrist]}, ...]
+    Returns (params, info) or (None, reason).
+
+    The tool offset is folded into l3 as an effective length: a touch cannot separate "the
+    forearm is longer" from "the tool sticks out further", because both move the tip the same
+    way. Pass l3_fixed once the tool is measured, to tighten the rest.
+    """
+    obs = []
+    for q in poses:
+        mid = int(q["marker"])
+        if mid not in markers:
+            return None, f"no measured position for marker {mid}"
+        sv = [float(v) for v in q["servo"]]
+        if len(sv) < 4:
+            return None, f"marker {mid}: need 4 servo values [base, shoulder, elbow, wrist]"
+        x, y, z = markers[mid][:3]
+        obs.append((sv, math.hypot(x, y), z))
+    if len(obs) < 6:
+        return None, (f"only {len(obs)} poses - at least 6 are needed, and 8 is where this "
+                      "becomes trustworthy")
+
+    per_marker = {}
+    for q in poses:
+        per_marker.setdefault(int(q["marker"]), []).append(float(q["servo"][3]))
+    thin = [m for m, w in per_marker.items() if len(w) < MIN_POSES_PER_MARKER]
+    if thin:
+        return None, (f"markers {sorted(thin)} were touched only once. One pose per marker "
+                      "cannot separate the shoulder, elbow and wrist: the fit looks excellent "
+                      "on the measured points and is about 154 mm wrong everywhere else. "
+                      "Touch each marker again with the wrist at a clearly different pitch.")
+    flat = [m for m, w in per_marker.items() if len(w) >= 2 and max(w) - min(w) < 15.0]
+    if flat:
+        return None, (f"markers {sorted(flat)} were touched more than once but at nearly the "
+                      "same wrist pitch, which adds no information. Vary the wrist by at "
+                      "least 20 deg between touches.")
+
+    free = [k for k in PITCH_KEYS if not (l3_fixed is not None and k == "l3")]
+    fixed = {"l3": float(l3_fixed)} if l3_fixed is not None else {}
+    start = {"zs": 90.0, "gs": 0.8, "ze": 89.5, "ge": 0.8, "zw": 180.0, "gw": 0.8, "l3": 190.0}
+
+    def expand(v):
+        P = dict(fixed)
+        P.update(dict(zip(free, v)))
+        return P
+
+    def res(v):
+        P = expand(v)
+        out = []
+        for sv, r, z in obs:
+            pr, pz = _chain_rz(P, sv, links, signs)
+            out += [pr - r, pz - z]
+        return np.array(out)
+
+    x = np.array([start[k] for k in free], float)
+    lam = 1e-3
+    f = res(x)
+    cost = float(f @ f)
+    for _ in range(300):
+        J = np.zeros((len(f), len(x)))
+        for k in range(len(x)):
+            d = np.zeros(len(x))
+            d[k] = 1e-6 * max(1.0, abs(x[k]))
+            J[:, k] = (res(x + d) - f) / d[k]
+        A, g = J.T @ J, J.T @ f
+        for _ in range(50):
+            try:
+                step = np.linalg.solve(A + lam * np.diag(np.diag(A) + 1e-12), -g)
+            except np.linalg.LinAlgError:
+                lam *= 10
+                continue
+            xn = x + step
+            fn = res(xn)
+            cn = float(fn @ fn)
+            if cn < cost:
+                x, f, cost, lam = xn, fn, cn, max(lam * 0.3, 1e-9)
+                break
+            lam *= 10
+        else:
+            break
+
+    P = expand(x)
+    per_pose = []
+    for sv, r, z in obs:
+        pr, pz = _chain_rz(P, sv, links, signs)
+        per_pose.append(math.hypot(pr - r, pz - z))
+    return P, {"rms": math.sqrt(cost / (2 * len(obs))), "worst": max(per_pose),
+               "n": len(obs), "per_pose": per_pose}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--template", action="store_true", help="write a blank servo_cal.json")
@@ -192,6 +308,8 @@ def main():
                     help="base plate tilt in degrees, subtracted from pitch-joint readings")
     ap.add_argument("--base-from-markers", action="store_true",
                     help="show the marker azimuths for calibrating the base without a protractor")
+    ap.add_argument("--l3", type=float, default=None,
+                    help="effective tool length, if measured, to tighten the pitch-joint fit")
     a = ap.parse_args()
 
     if a.base_from_markers:
@@ -227,6 +345,41 @@ def main():
     cfg = json.loads(CFG_PATH.read_text())
     by_name = {j["name"]: j for j in cfg["joints"]}
     results, failed = {}, []
+
+    mposes = cal.get("marker_poses") or []
+    if mposes:
+        try:
+            vj = json.loads((HERE / "vision.json").read_text())
+            markers = {int(k): v for k, v in vj["markers"].items()}
+        except Exception as e:
+            markers = {}
+            failed.append(f"marker_poses given but vision.json is unreadable: {e}")
+        if markers:
+            signs = [by_name[n]["sign"] for n in ("shoulder", "elbow", "wrist pitch")]
+            P, info = fit_pitch_joints(mposes, markers, cfg["links"], signs, a.l3)
+            if P is None:
+                print(f"pitch joints NOT fitted: {info}\n")
+            else:
+                print(f"pitch joints from {info['n']} marker touches: "
+                      f"RMS {info['rms']:.1f} mm, worst pose {info['worst']:.1f} mm")
+                for name, z, g in (("shoulder", "zs", "gs"), ("elbow", "ze", "ge"),
+                                   ("wrist pitch", "zw", "gw")):
+                    cur = by_name.get(name, {})
+                    print(f"  {name:13} zero {P[z]:8.2f} (was {cur.get('zero', '?')})   "
+                          f"gain {P[g]:7.4f} (was {cur.get('gain', '?')})")
+                    results[name] = {"fit": {"zero": round(P[z], 2), "sign": cur.get("sign", 1),
+                                             "gain": round(P[g], 4)},
+                                     "r2": float("nan"), "worst": info["worst"],
+                                     "n": info["n"], "notes": []}
+                print(f"  effective tool length {P['l3']:.1f} mm (L3 {cfg['links']['L3']} plus "
+                      "whatever the tool adds - a touch cannot tell those apart)")
+                for name in ("shoulder", "elbow", "wrist pitch"):
+                    j = by_name.get(name)
+                    if j and not (0.5 <= results[name]["fit"]["gain"] <= 1.2):
+                        results[name]["notes"].append(
+                            f"gain {results[name]['fit']['gain']:.3f} is outside the plausible "
+                            "0.5-1.2 range - treat this fit with suspicion")
+                print()
 
     # axis measurements are plate-relative already, so the tilt must not be applied to them
     axis_pairs, axis_tilt = {}, 0.0

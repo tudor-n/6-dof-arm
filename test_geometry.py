@@ -945,6 +945,111 @@ def test_marker_offsets_empty_without_a_pose():
     assert vis.marker_offsets() == {}
 
 
+# ------------------------------------------- fitting the pitch joints from marker touches
+
+PITCH_SIGNS = (1, -1, -1)
+RIG = dict(zs=82.0, gs=0.76, ze=89.5, ge=0.74, zw=175.0, gw=0.75, l3=200.0)
+
+
+def servos_touching(r, z, pitch_deg, P, links):
+    """Servo values a rig with parameters P needs to put its tip on (r, z) at a tool pitch."""
+    L0, L1, L2 = links["L0"], links["L1"], links["L2"]
+    p = math.radians(pitch_deg)
+    wr, wz = r - P["l3"] * math.cos(p), z - L0 - P["l3"] * math.sin(p)
+    d = math.hypot(wr, wz)
+    if d > (L1 + L2) * 0.999 or d < abs(L1 - L2) + 1e-6:
+        return None
+    c = (d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2)
+    bi = math.acos(max(-1.0, min(1.0, c)))
+    a1 = math.atan2(wz, wr) + math.atan2(L2 * math.sin(bi), L1 + L2 * math.cos(bi))
+    a2 = a1 - bi
+    return [90.0,
+            P["zs"] + (90.0 - math.degrees(a1)) / (PITCH_SIGNS[0] * P["gs"]),
+            P["ze"] + math.degrees(a1 - a2) / (PITCH_SIGNS[1] * P["ge"]),
+            P["zw"] + math.degrees(a2 - p) / (PITCH_SIGNS[2] * P["gw"])]
+
+
+def synth_marker_poses(pitch_offsets, markers, links):
+    base_pitch = {0: -35.0, 1: -35.0, 2: -20.0, 3: -20.0}
+    poses = []
+    for mid in sorted(markers):
+        x, y, z = markers[mid][:3]
+        for dp in pitch_offsets:
+            sv = servos_touching(math.hypot(x, y), z, base_pitch[mid] + dp, RIG, links)
+            if sv:
+                poses.append({"marker": mid, "servo": sv})
+    return poses
+
+
+def pitch_fixture():
+    vis = V.Vision(".", 0, lambda *a, **k: None)
+    cfg = S.load_cfg()
+    return vis.markers, cfg["links"]
+
+
+def test_one_pose_per_marker_is_refused():
+    """The lesson of 2026-10-19: four touches fit beautifully and predict nothing."""
+    markers, links = pitch_fixture()
+    poses = synth_marker_poses([0.0], markers, links)
+    assert len(poses) == 4
+    P, why = FC.fit_pitch_joints(poses, markers, links, PITCH_SIGNS)
+    assert P is None
+    assert "at least 6" in why or "only once" in why
+
+
+def test_two_poses_at_the_same_wrist_pitch_are_refused():
+    """Repeating a pose adds observations but no information."""
+    markers, links = pitch_fixture()
+    poses = synth_marker_poses([0.0, 3.0], markers, links)   # only 3 deg apart
+    assert len(poses) == 8
+    P, why = FC.fit_pitch_joints(poses, markers, links, PITCH_SIGNS)
+    assert P is None and "same wrist pitch" in why
+
+
+def test_two_well_separated_pitches_recover_the_rig():
+    markers, links = pitch_fixture()
+    poses = synth_marker_poses([0.0, 25.0], markers, links)
+    P, info = FC.fit_pitch_joints(poses, markers, links, PITCH_SIGNS)
+    assert P is not None, info
+    assert info["rms"] < 0.5, f"noiseless input should fit almost exactly, got {info['rms']}"
+
+
+def test_the_fitted_model_predicts_the_tip_across_the_workspace():
+    """What actually matters: parameters may be degenerate, predictions must not be."""
+    markers, links = pitch_fixture()
+    poses = synth_marker_poses([0.0, 25.0], markers, links)
+    P, info = FC.fit_pitch_joints(poses, markers, links, PITCH_SIGNS)
+    assert P is not None, info
+
+    worst = 0.0
+    for r in (200, 260, 320):
+        for z in (5, 80, 140):
+            for pitch in (-40, -10, 15):
+                sv = servos_touching(r, z, pitch, RIG, links)
+                if not sv:
+                    continue
+                got = FC._chain_rz(P, sv, links, PITCH_SIGNS)
+                want = FC._chain_rz(RIG, sv, links, PITCH_SIGNS)
+                worst = max(worst, math.hypot(got[0] - want[0], got[1] - want[1]))
+    assert worst < 2.0, f"tip prediction off by {worst:.1f} mm away from the measured poses"
+
+
+def test_fixing_the_tool_length_is_accepted():
+    markers, links = pitch_fixture()
+    poses = synth_marker_poses([0.0, 25.0], markers, links)
+    P, info = FC.fit_pitch_joints(poses, markers, links, PITCH_SIGNS, l3_fixed=RIG["l3"])
+    assert P is not None, info
+    assert abs(P["l3"] - RIG["l3"]) < 1e-9, "a fixed tool length must not be refitted"
+
+
+def test_unknown_marker_is_reported():
+    markers, links = pitch_fixture()
+    poses = synth_marker_poses([0.0, 25.0], markers, links)
+    poses[0] = {"marker": 9, "servo": poses[0]["servo"]}
+    P, why = FC.fit_pitch_joints(poses, markers, links, PITCH_SIGNS)
+    assert P is None and "marker 9" in why
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():
