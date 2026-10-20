@@ -27,6 +27,11 @@ DEFAULT_SETTINGS = {
 DEFAULT_TAPE = {}
 DEFAULT_ARUCO_MM = 0.0      # black-square edge length, for the future 16-corner pose
 TAPE_WARN_MM = 10.0         # shape disagreement above this is reported loudly
+# Words the tablet's in-app keyboard suggests for the detect prompt (vision.json "vocab" overrides).
+DEFAULT_VOCAB = ["pen", "pencil", "pliers", "phone", "paper clip", "plate", "cup", "cube", "cutter", "coin", "cap", "cable",
+                 "block", "bottle", "bolt", "battery", "ball", "box", "tape", "tape measure", "scissors", "screw", "sponge",
+                 "spoon", "marker", "mug", "nut", "key", "knife", "eraser", "glue stick", "wrench", "remote", "lego brick",
+                 "usb stick", "washer", "die", "dice", "fork", "hex key", "lid", "toy car", "screwdriver"]
 DEFAULT_ROLL = {"zero": 90.0, "sign": 1}   # servo value where the jaws close along the arm; +1 = servo up turns jaws CCW from above
 DISP_W = 960
 
@@ -123,6 +128,7 @@ class Vision:
         self.s = dict(DEFAULT_SETTINGS)
         self.roll = dict(DEFAULT_ROLL)
         self.tape = dict(DEFAULT_TAPE)
+        self.vocab = list(DEFAULT_VOCAB)
         self.aruco_mm = DEFAULT_ARUCO_MM
         self.fit_info = ""
         self._load()
@@ -161,6 +167,7 @@ class Vision:
         self.running = False
         self.frame = None; self.res = (0, 0); self.fps = 0.0
         self.jpg = None; self.seq = 0
+        self.annot = None; self.small = None; self.small_key = None   # overlaid frame + its downscaled JPEG
         self.tip_cur = self.tip_tgt = None; self.jaw_deg = None
         self.click = None          # (x, y, u, v) in full-res pixels
         self.detect_on = False; self.prompts = ["screwdriver", "tool handle", "metal tool", "pen", "pencil"]
@@ -177,6 +184,7 @@ class Vision:
             self.roll.update(d.get("roll", {}))
             self.tape = {str(k): float(v) for k, v in (d.get("tape") or {}).items()}
             self.aruco_mm = float(d.get("aruco_mm", DEFAULT_ARUCO_MM))
+            self.vocab = [str(w) for w in d.get("vocab", self.vocab)]
         except FileNotFoundError:
             pass
         except Exception as e:
@@ -185,7 +193,7 @@ class Vision:
     def save(self):
         self.file.write_text(json.dumps({"markers": self.markers, "touched": self.touched, "measured": self.measured,
                                          "settings": self.s, "roll": self.roll, "tape": self.tape,
-                                         "aruco_mm": self.aruco_mm}, indent=2))
+                                         "aruco_mm": self.aruco_mm, "vocab": self.vocab}, indent=2))
 
     def set_setting(self, key, val):
         if key not in DEFAULT_SETTINGS: return
@@ -787,7 +795,18 @@ class Vision:
             cv2.putText(d, f"{self.rejects} solves rejected - pose is stale", (12, 46),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
         ok, buf = cv2.imencode(".jpg", d, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        if ok: self.jpg = buf.tobytes(); self.seq += 1
+        if ok: self.annot = d; self.jpg = buf.tobytes(); self.seq += 1
+
+    def small_jpg(self, w, h, q=60):
+        """The overlaid frame re-encoded at w x h: the old tablet then neither rescales nor decodes
+        more pixels than it shows. Cached per frame, so several clients cost one encode."""
+        d, key = self.annot, (self.seq, w, h, q)
+        if d is None: return None
+        if self.small_key != key:
+            ok, buf = cv2.imencode(".jpg", cv2.resize(d, (w, h), interpolation=cv2.INTER_AREA), [cv2.IMWRITE_JPEG_QUALITY, q])
+            if not ok: return None
+            self.small, self.small_key = buf.tobytes(), key
+        return self.small
 
     def _grid(self, d, P):
         for fixed_x in range(0, 401, 50):

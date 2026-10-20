@@ -730,8 +730,17 @@ async def video(req):
 
 async def frame(req):
     # single JPEG, for browsers that cannot show the multipart MJPEG stream in an <img>
+    # ?w=456&h=342 asks for a downscaled, lower-quality copy (the tablet shows the feed at exactly that size)
     if V is None or V.jpg is None: return web.Response(status=503, text="no frame")
-    return web.Response(body=V.jpg, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
+    jpg = V.jpg
+    try: w, h = int(req.query.get("w", 0)), int(req.query.get("h", 0))
+    except ValueError: w = h = 0
+    if 80 <= w <= 1920 and 60 <= h <= 1080: jpg = V.small_jpg(w, h) or jpg
+    return web.Response(body=jpg, content_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+async def vocab(req):
+    # word list for the in-app detect keyboard; editable as "vocab" in vision.json
+    return web.json_response({"vocab": V.vocab if V is not None else []}, headers=NOCACHE)
 
 def connect_serial(port):
     ser = serial.Serial(port, 115200, timeout=0.2)
@@ -782,6 +791,7 @@ def main():
     app.router.add_get("/cam_panel.js", lambda r: web.FileResponse(HERE / "cam_panel.js", headers=NOCACHE))
     app.router.add_get("/video", video)
     app.router.add_get("/frame.jpg", frame)
+    app.router.add_get("/vocab.json", vocab)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/poll", poll_handler)
     app.router.add_post("/send", send_handler)

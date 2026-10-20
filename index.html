@@ -1,145 +1,251 @@
 <!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Arm</title>
-<script>
-// Old WebKit (Android 4.2 WebView, e.g. Galaxy Tab 3 Lite SM-T110) has no flex-wrap: lay out with inline-blocks instead.
-(function(){var d=document.documentElement,s=d.style;if(!('flexWrap' in s)&&!('webkitFlexWrap' in s))d.className+=' noflex';})();
-</script>
 <style>
-/* colours are literals, not CSS variables, so old browsers get them too:
-   bg #14161a  panel #1d2025  line #2c3138  fg #e6e8eb  dim #8a919b  acc #4ea1ff  ok #38c172  warn #f0a030  bad #ef5350 */
-*{box-sizing:border-box}body{margin:0;background:#14161a;color:#e6e8eb;font:14px system-ui,sans-serif}
-/* Nothing scrolls: the page is pinned to the screen so a stray drag cannot carry the controls away.
-   Only <main> on the Calibrate / Camera tabs scrolls, inside itself (it holds more than a screen). */
-html,body{height:100%;overflow:hidden}
-body{position:fixed;left:0;top:0;right:0;bottom:0;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:rgba(0,0,0,0)}
-input,textarea{-webkit-user-select:text;user-select:text}
-main{position:absolute;left:0;right:0;bottom:0;overflow:hidden}
-main.scroll{overflow-y:auto;-webkit-overflow-scrolling:touch}
-#move{justify-content:center;text-align:center}#move .card{text-align:left}
-header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:10px 14px;background:#1d2025;border-bottom:1px solid #2c3138}
-button{background:#2a2f37;color:#e6e8eb;border:1px solid #2c3138;border-radius:6px;padding:7px 12px;font:inherit;cursor:pointer}
-button:hover{border-color:#4ea1ff}button.on{background:#38c172;color:#06210f;border-color:#38c172;font-weight:600}
-button.tab.sel{border-color:#4ea1ff;color:#4ea1ff}
-.chip{padding:3px 8px;border-radius:10px;font-size:12px;background:#2a2f37;color:#8a919b}
-.chip.warn{background:#4a3410;color:#f0a030}.chip.ok{background:#12351f;color:#38c172}
-main{padding:12px;display:flex;flex-wrap:wrap;gap:12px}
-.views{display:flex;flex-wrap:wrap;gap:12px;flex:1 1 600px}
-.card{background:#1d2025;border:1px solid #2c3138;border-radius:8px;padding:10px}
-canvas{width:100%;touch-action:none;background:#101215;border-radius:6px;display:block}
-.sidecard{flex:1 1 560px}.topcard{flex:1 1 300px}
-@media (max-width: 950px) and (orientation: landscape) {
-  .sidecard { flex: 56 1 0%; min-width: 0; }
-  .topcard { flex: 42 1 0%; min-width: 0; }
-}
-
-/* Vertical Thumb Sliders overlay for mobile/desktop */
-.v-slider {
-  position: absolute;
-  top: 15px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  pointer-events: none;
-  z-index: 10;
-}
-.v-slider.left { left: 15px; }
-.v-slider.right { right: 15px; }
-.v-slider > * { pointer-events: auto; }
-.v-slider label, .v-slider span {
-  background: rgba(29,32,37,0.8);
-  padding: 3px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #4ea1ff;
-}
-.v-slider input[type=range] {
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
-  width: 32px;
-  height: 160px;
-  margin: 5px 0;
-  cursor: pointer;
-}
-
-.row{display:flex;align-items:center;gap:10px;margin:8px 0}.row label{width:90px;color:#8a919b}
-.row input[type=range]{flex:1}.row span{width:60px;text-align:right;font-variant-numeric:tabular-nums}
-.panel{flex:1 1 100%}table{width:100%;border-collapse:collapse}td{padding:6px 4px;border-top:1px solid #2c3138}
-td input[type=range]{width:100%}input[type=number]{width:70px;background:#101215;color:#e6e8eb;border:1px solid #2c3138;border-radius:4px;padding:4px}
-.help{color:#8a919b;line-height:1.5;margin:0 0 10px}.mono{font-variant-numeric:tabular-nums;color:#8a919b}
-
-/* ---- no flex-wrap: inline-blocks (gaps become margins, rows wrap like text) ---- */
-.noflex header>*{display:inline-block;vertical-align:middle;margin:0 8px 8px 0}
-.noflex main,.noflex .views{display:block}
-.noflex .card{margin-bottom:12px}
-.noflex .sidecard{display:inline-block;vertical-align:top;width:56%;margin-right:1%}
-.noflex .topcard{display:inline-block;vertical-align:top;width:41%}
-.noflex .row>*{display:inline-block;vertical-align:middle;margin-right:8px}
-.noflex .row input[type=range]{width:55%}
-.noflex .v-slider{display:block;text-align:center}
-.noflex .v-slider>*{display:block;margin:0 auto 5px}
-/* a vertical range input does not exist here: rotate a horizontal one; the negative margins give it a 32x160 footprint */
-.noflex .v-slider input[type=range]{-webkit-appearance:slider-horizontal;width:160px;height:32px;margin:64px -64px;
-  -webkit-transform:rotate(-90deg);transform:rotate(-90deg)}
+/* Built for the Galaxy Tab 3 Lite (SM-T110): 1024x600 at DPR 1, Android 4.2 WebKit, slow CPU.
+   Every region is absolutely positioned with literal px (no flex/grid/gap/variables there), there are
+   no shadows, gradients, filters or translucent layers, colours are hex literals and state changes only
+   swap classes. Other screens get the whole 1024x600 frame scaled to fit (fitApp).
+   bg #000  ink #fff  dim #8a8a8a  faint #5c5c5c  line #262626  line2 #3a3a3a  green #30d158  amber #ffb020  red #d92d20 */
+*{-webkit-box-sizing:border-box;box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+body{position:fixed;left:0;top:0;right:0;bottom:0;color:#fff;font:400 15px/1.4 Roboto,"Droid Sans",sans-serif;cursor:default;
+ -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:rgba(0,0,0,0);-webkit-text-size-adjust:none;touch-action:none}
+#app{position:absolute;left:0;top:0;width:1024px;height:600px;overflow:hidden;background:#000;-webkit-transform-origin:0 0;transform-origin:0 0}
+.x{position:absolute}
+.v{position:absolute;left:0;top:56px;width:1024px;height:472px}
+.m{font-family:"Droid Sans Mono","Roboto Mono",Menlo,Consolas,monospace;font-weight:500}
+.lb{font-weight:600;font-size:11px;line-height:11px;letter-spacing:.14em;text-transform:uppercase;color:#8a8a8a;white-space:nowrap}
+.hn{font-size:12px;line-height:12px;color:#5c5c5c;white-space:nowrap}
+.d{color:#8a8a8a}.f{color:#5c5c5c}
+.bl{border-left:1px solid #262626}.br{border-right:1px solid #262626}.bt{border-top:1px solid #262626}.bb{border-bottom:1px solid #262626}
+.il{display:inline-block;vertical-align:top}
+.scroll{overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+/* buttons: press feedback is the .prs class set on touch-down (:active is unreliable on 4.2) */
+.b{height:48px;line-height:46px;padding:0 12px;border:1px solid #3a3a3a;border-radius:3px;font-weight:600;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#fff;text-align:center;white-space:nowrap;cursor:pointer}
+.b.pr{background:#fff;color:#000;border-color:#fff;font-weight:700}
+.b.am{border-color:#ffb020;color:#ffb020}
+.b.prs,.b.on{background:#fff;color:#000;border-color:#fff}
+.b.pr.prs,.b.on.prs{background:#b8b8b8;border-color:#b8b8b8}
+.b.am.prs,.b.arm{background:#ffb020;color:#000;border-color:#ffb020}
+.b.dis{color:#3a3a3a;border-color:#262626;background:#000}
+.b.h44{height:44px;line-height:42px}.b.h52{height:52px;line-height:50px;padding:0 20px}
+.b.nd{height:72px;line-height:70px;font-family:"Droid Sans Mono","Roboto Mono",Menlo,Consolas,monospace;font-weight:500;font-size:18px;letter-spacing:0;padding:0}
+.b.jg{height:44px;line-height:42px;padding:0;font-family:"Droid Sans Mono","Roboto Mono",Menlo,Consolas,monospace;font-weight:500;font-size:13px;letter-spacing:0}
+.pl{height:44px;line-height:42px;border:1px solid #3a3a3a;border-radius:3px;font-weight:600;font-size:11px;letter-spacing:.1em;text-transform:uppercase;text-align:center;white-space:nowrap;cursor:pointer}
+.pl.on{background:#fff;color:#000;border-color:#fff}.pl.prs{background:#3a3a3a}.pl.on.prs{background:#b8b8b8}
+.tl{font-weight:600;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#8a8a8a;white-space:nowrap;cursor:pointer}.tl.prs{color:#fff}
+/* a value you tap to edit with the in-page keypad (never an <input>: Android's keyboard must not appear) */
+.fld{height:48px;line-height:46px;padding:0 12px;border:1px solid #3a3a3a;border-radius:3px;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.fld.prs,.fld.ed{border-color:#fff}.fld.pin{color:#ffb020}
+/* switches: only the knob moves (composited -webkit-transform) */
+.sw{position:absolute;width:56px;height:30px;border-radius:15px;background:#262626;border:1px solid #3a3a3a}
+.sw i{position:absolute;left:2px;top:2px;width:24px;height:24px;border-radius:12px;background:#fff;-webkit-transition:-webkit-transform .12s;transition:transform .12s}
+.on>.sw{background:#30d158;border-color:#30d158}.on>.sw i{background:#000;-webkit-transform:translate3d(26px,0,0);transform:translate3d(26px,0,0)}
+.sw.s2{width:48px;height:26px;border-radius:13px}.sw.s2 i{width:20px;height:20px;border-radius:10px}
+.on>.sw.s2{background:#fff;border-color:#fff}.on>.sw.s2 i{-webkit-transform:translate3d(22px,0,0);transform:translate3d(22px,0,0)}
+/* custom sliders: a rail (the hit area), a track and a thumb moved with translate3d */
+.sl{cursor:pointer}.sl .tk{position:absolute;background:#3a3a3a}
+.sl .th{position:absolute;left:0;top:0;background:#fff;border-radius:3px}.sl .th i{position:absolute;background:#000}
+/* top bar */
+#bar{left:0;top:0;width:1024px;height:56px;border-bottom:1px solid #262626;background:#000}
+.brand{left:0;top:0;width:92px;height:55px;line-height:55px;text-align:center;font-weight:600;font-size:13px;letter-spacing:.14em;text-indent:.14em;border-right:1px solid #262626}
+#tabs{left:92px;top:0;height:55px;white-space:nowrap}
+.tab{display:inline-block;vertical-align:top;position:relative;height:55px;line-height:55px;padding:0 22px;font-weight:600;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:#8a8a8a;cursor:pointer}
+.tab.sel,.tab.prs{color:#fff}.tab.sel:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:#fff}
+#stat{right:270px;top:0;height:55px;line-height:55px;padding:0 18px;white-space:nowrap}
+.wchip{display:none;vertical-align:middle;height:28px;line-height:26px;padding:0 10px;margin-right:14px;border:1px solid #ffb020;border-radius:3px;color:#ffb020;font-weight:600;font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+.wchip.on{display:inline-block}
+.sq{display:inline-block;width:6px;height:6px;background:#ffb020;margin-right:8px;vertical-align:middle;position:relative;top:-1px}
+#link{display:inline-block;vertical-align:middle;line-height:12px;font-size:12px;color:#8a8a8a}
+.dot{display:inline-block;width:8px;height:8px;border-radius:4px;background:#5c5c5c;margin-right:8px;vertical-align:middle;position:relative;top:-1px}
+.dot.g{background:#30d158}.dot.a{background:#ffb020}
+#live{left:754px;top:0;width:138px;height:55px;border-left:1px solid #262626;cursor:pointer}#live.prs{background:#141414}
+#live .t{left:17px;top:0;line-height:55px;font-weight:600;font-size:12px;letter-spacing:.12em}
+#stop{left:892px;top:0;width:132px;height:56px;background:#d92d20;cursor:pointer;text-align:center;color:#fff}#stop.prs{background:#a8170c}
+#stop .s1{left:0;top:13px;width:132px;font-weight:700;font-size:18px;line-height:18px;letter-spacing:.16em;text-indent:.16em}
+#stop .s2{left:0;top:34px;width:132px;font-size:10px;line-height:10px;letter-spacing:.1em;text-indent:.1em}
+/* move tab */
+#limp{left:122px;top:159px;width:300px;padding:18px 20px;background:#000;border:1px solid #ffb020;border-radius:4px}
+#limp .lb{color:#ffb020;font-size:12px;line-height:12px}#limp p{margin-top:8px;font-size:15px;line-height:21px}
+#rd span{display:inline-block;width:52px;margin-left:6px}#rd b{color:#fff;font-weight:500}
+.gst{font-size:11px;line-height:23px;text-align:center;color:#8a8a8a}.gst.mv{color:#ffb020;font-weight:600}
+.b.hold{height:177px;line-height:175px;padding:0}
+/* action bar */
+#abar{left:0;top:528px;width:1024px;height:72px;border-top:1px solid #262626;background:#000}
+#seg{left:76px;top:11px;width:242px;height:48px;border:1px solid #3a3a3a;border-radius:3px}
+#seg span{position:absolute;top:0;width:60px;height:46px;line-height:46px;text-align:center;font-size:14px;cursor:pointer}
+#seg span.sel{background:#fff;color:#000}#seg span.prs{background:#3a3a3a;color:#fff}
+#seg .c0{left:0;border-radius:2px 0 0 2px}#seg .c1{left:60px}#seg .c2{left:120px}#seg .c3{left:180px;border-radius:0 2px 2px 0}
+#acts{right:12px;top:11px;height:48px;white-space:nowrap;font-size:0;line-height:0}
+#acts .b{display:inline-block;vertical-align:top;margin-left:8px}
+.dv{display:inline-block;vertical-align:top;width:1px;height:32px;margin:8px 2px 0 10px;background:#262626}
+/* left lists (Calibrate, camera Setup) */
+.cr{position:absolute;left:0;width:259px;height:52px;border-bottom:1px solid #1a1a1a;cursor:pointer}
+.cr .dt{position:absolute;left:20px;top:22px;width:8px;height:8px;border-radius:4px;border:1px solid #5c5c5c}
+.cr.done .dt{background:#30d158;border-color:#30d158}
+.cr .nm{position:absolute;left:40px;top:0;line-height:52px;font-weight:500;font-size:14px;color:#8a8a8a;white-space:nowrap}
+.cr .sb{position:absolute;right:20px;top:0;line-height:52px;font-size:11px;color:#5c5c5c}
+.cr.cur{background:#fff;border-bottom-color:#fff}.cr.cur .nm{left:20px;color:#000;font-weight:600}.cr.cur .sb{color:#000}.cr.cur .dt{display:none}
+.cr.prs{background:#1a1a1a}.cr.cur.prs{background:#d0d0d0}
+.cr.nodot .nm{left:20px}
+.ul{font-weight:500;font-size:12px;line-height:44px;color:#8a8a8a;text-decoration:underline;cursor:pointer;white-space:nowrap}.ul.prs{color:#fff}
+/* calibrate */
+.pg span{position:absolute;top:0;width:37px;height:4px;background:#262626}.pg span.on{background:#fff}
+.wt{font-weight:600;font-size:30px;line-height:33px}
+.wi{margin-top:10px;font-size:17px;line-height:25px}.wi b{font-weight:700}
+.ws{margin-top:10px;font-size:13px;line-height:19px;color:#8a8a8a}.ws.am{color:#ffb020}
+.big{font-size:64px;line-height:64px;letter-spacing:-.02em}
+.rawn{font-size:14px;line-height:16px;white-space:nowrap}.rawi{width:134px;font-size:10px;line-height:12px;color:#5c5c5c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* keypads */
+.scrim{background:#000}
+.sheet{background:#000;border-top:1px solid #3a3a3a}
+.ky{position:absolute;width:84px;height:54px;line-height:52px;text-align:center;background:#141414;border:1px solid #2a2a2a;border-radius:6px;font-weight:500;font-size:22px;color:#fff;cursor:pointer;white-space:nowrap}
+.ky.sp{font-weight:600;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#8a8a8a}
+.ky.go{background:#fff;color:#000;border-color:#fff;font-weight:700}
+.ky.prs{background:#fff;color:#000;border-color:#fff}.ky.go.prs{background:#b8b8b8;border-color:#b8b8b8}
+#padv{font-size:28px;line-height:40px;height:40px;padding:0 4px;white-space:nowrap;overflow:hidden}#padv.fresh{background:#fff;color:#000}
 </style></head><body>
-<header id="hdr">
- <button id="live">Live: OFF</button>
- <button id="home">Start pose</button><button id="rlx5" title="cut gripper PWM (limp, no heat)">Relax gripper</button><button id="wake" title="re-enable PWM on all joints">Wake all</button><button id="rlxa" title="cut PWM on ALL joints - arm may drop">Relax all</button><button id="rest">Rest pose</button>
- <span>Speed <input id="speed" type="range" min="10" max="180" value="60"> <span id="speedv" class="mono">60°/s</span></span>
- <button class="tab sel" data-tab="move">Move</button><button class="tab" data-tab="cal">Calibrate</button>
- <span id="hw" class="chip">connecting…</span><span id="warn" class="chip" style="display:none"></span>
-</header>
-<main>
- <div id="move" class="views">
-  <div class="card sidecard" style="position:relative">
+<div id="app">
 
-    <!-- LEFT THUMB: WRIST ROLL -->
-    <div class="v-slider left">
-      <label>Roll</label>
-      <input id="roll" type="range" orient="vertical" min="0" max="180" step="1">
-      <span id="rollv"></span>
-    </div>
-
-    <!-- RIGHT THUMB: GRIPPER -->
-    <div class="v-slider right">
-      <label>Grip</label>
-      <input id="grip" type="range" orient="vertical" min="0" max="180" step="1">
-      <span id="gripv"></span>
-    </div>
-
-    <canvas id="side" width="560" height="460"></canvas>
+<div id="move" class="v">
+ <div class="x br" style="left:0;top:0;width:84px;height:472px">
+  <div class="x lb" style="left:0;top:16px;width:83px;text-align:center;text-indent:.14em">Roll</div>
+  <div id="rollS" class="x sl" style="left:0;top:36px;width:83px;height:380px">
+   <div class="tk" style="left:41px;top:0;width:2px;height:380px"></div>
+   <div id="rollTick" class="tk" style="left:34px;top:190px;width:16px;height:1px"></div>
+   <div class="th" style="left:18px;width:48px;height:32px"><i style="left:14px;top:12px;width:20px;height:2px"></i><i style="left:14px;top:17px;width:20px;height:2px"></i></div>
   </div>
-  <div class="card topcard"><canvas id="top" width="420" height="460"></canvas></div>
+  <div id="rollv" class="x m" style="left:0;top:442px;width:83px;text-align:center;font-size:16px;line-height:16px">–</div>
  </div>
- <div id="cal" class="card panel" style="display:none">
-  <div id="wiz"></div>
-  <details style="margin-top:16px"><summary>Advanced: raw sliders, all limits, link lengths</summary>
-   <p class="help">Raw sliders respect each joint's limits unless the wizard is running.</p>
-   <table id="caltable"></table>
-   <h4>Link lengths (mm)</h4>
-   <div id="links" class="row"></div>
-  </details>
+ <div class="x" style="left:84px;top:0;width:544px;height:472px">
+  <canvas id="side" class="x" width="544" height="448" style="left:0;top:24px;width:544px;height:448px"></canvas>
+  <div class="x" style="left:16px;top:14px;white-space:nowrap"><span class="lb">Side</span><span id="sideHint" class="hn" style="margin-left:10px"></span></div>
+  <div id="rd" class="x m" style="right:16px;top:12px;font-size:12px;line-height:12px;color:#8a8a8a;white-space:nowrap"><span>X <b id="rx">–</b></span><span>Y <b id="ry">–</b></span><span>Z <b id="rz">–</b></span><span>P <b id="rp">–</b></span></div>
+  <div id="limp" class="x" style="display:none"><div id="limpT" class="lb">Servos limp</div><p>Nothing moves until LIVE is on. Keep a hand near the power switch.</p></div>
  </div>
-</main>
+ <div class="x bl" style="left:628px;top:0;width:300px;height:472px">
+  <div class="x" style="left:16px;top:14px;white-space:nowrap"><span class="lb">Top</span><span class="hn" style="margin-left:10px">drag the dial · base only</span></div>
+  <canvas id="top" class="x" width="299" height="328" style="left:0;top:56px;width:299px;height:328px"></canvas>
+  <div class="x" style="left:0;top:415px;width:299px;height:57px;border-top:1px solid #1a1a1a">
+   <div class="x lb" style="left:16px;top:26px">Base</div>
+   <div id="basev" class="x m" style="right:16px;top:12px;font-size:28px;line-height:28px">–</div>
+  </div>
+ </div>
+ <div class="x bl" style="left:928px;top:0;width:96px;height:472px">
+  <div class="x lb" style="left:0;top:16px;width:95px;text-align:center;text-indent:.14em">Grip</div>
+  <div class="x b hold" data-a="grip" data-d="1" style="left:12px;top:37px;width:71px">Open</div>
+  <div id="gst" class="x m gst" style="left:0;top:224px;width:95px;height:23px">BRAKED</div>
+  <div class="x b hold" data-a="grip" data-d="-1" style="left:12px;top:257px;width:71px">Close</div>
+  <div class="x f" style="left:0;top:444px;width:95px;text-align:center;font-size:10px;line-height:13px">hold</div>
+ </div>
+</div>
+
+<div id="cal" class="v" style="height:544px;display:none">
+ <div class="x br" style="left:0;top:0;width:260px;height:544px">
+  <div class="x lb" style="left:20px;top:16px">Guided · ~10 min</div>
+  <div id="wzlist"></div>
+  <div class="x ul" data-a="logs" style="left:0;top:440px;width:259px;padding-left:20px">Log &amp; warnings</div>
+  <div id="advl" class="x ul" data-a="adv" style="left:0;top:484px;width:259px;padding-left:20px">Advanced: raw sliders &amp; links</div>
+ </div>
+ <div id="wizv" class="x" style="left:260px;top:0;width:764px;height:544px">
+  <div id="wzstep" class="x m" style="left:28px;top:20px;font-size:12px;line-height:12px;color:#8a8a8a">STEP 1 / 15</div>
+  <div id="wzpg" class="x pg" style="left:128px;top:24px;width:608px;height:4px"></div>
+  <div class="x" style="left:28px;top:48px;width:620px">
+   <div id="wzt" class="wt"></div><div id="wzi" class="wi"></div><div id="wzs" class="ws"></div>
+  </div>
+  <div id="wzro" class="x" style="left:28px;top:284px;width:220px">
+   <div class="lb">Servo</div>
+   <div id="wzang" class="m big" style="margin-top:8px">–</div>
+   <div id="wzinfo" class="m f" style="margin-top:8px;font-size:12px;line-height:12px;white-space:nowrap">&nbsp;</div>
+  </div>
+  <div id="wzZero" class="x" style="left:256px;top:299px;width:344px;height:72px;display:none">
+   <div class="x b nd" data-a="nud" data-d="-5" style="left:0;top:0;width:80px">-5°</div>
+   <div class="x b nd" data-a="nud" data-d="-1" style="left:88px;top:0;width:80px">-1°</div>
+   <div class="x b nd" data-a="nud" data-d="1" style="left:176px;top:0;width:80px">+1°</div>
+   <div class="x b nd" data-a="nud" data-d="5" style="left:264px;top:0;width:80px">+5°</div>
+  </div>
+  <div id="wzDir" class="x" style="left:256px;top:299px;width:466px;height:72px;display:none">
+   <div class="x b" data-a="jp" data-jp="10" style="left:0;top:0;width:140px;height:72px;line-height:70px">Go to +10°</div>
+   <div class="x b" data-a="jp" data-jp="0" style="left:148px;top:0;width:140px;height:72px;line-height:70px">Back to 0°</div>
+   <div class="x b am" data-a="wzflip" style="left:296px;top:0;width:170px;height:72px;line-height:70px">Wrong way: flip</div>
+  </div>
+  <div id="wzLim" class="x" style="left:256px;top:299px;width:476px;height:72px;display:none">
+   <div class="x b" data-a="creep" data-dir="-1" style="left:0;top:0;width:170px;height:72px;line-height:70px">Hold: find min</div>
+   <div class="x b" data-a="creep" data-dir="1" style="left:178px;top:0;width:170px;height:72px;line-height:70px">Hold: find max</div>
+   <div class="x b" data-a="wzmid" style="left:356px;top:0;width:120px;height:72px;line-height:70px">Centre 90°</div>
+  </div>
+  <div id="wzLinks" class="x" style="left:28px;top:284px;width:708px;height:80px;display:none"></div>
+  <div class="x bt" style="left:28px;top:460px;width:708px;height:1px"></div>
+  <div id="wzb" class="x b h52" data-a="wzback" style="left:28px;top:476px"></div>
+  <div id="wzp" class="x b h52 pr" data-a="wzpri" style="right:148px;top:476px;padding:0 22px"></div>
+  <div id="wzn" class="x b h52" data-a="wznext" style="right:28px;top:476px;width:110px;padding:0"></div>
+ </div>
+ <div id="advv" class="x" style="left:260px;top:0;width:764px;height:544px;display:none">
+  <div class="x lb" style="left:28px;top:20px">Advanced · raw servos</div>
+  <div class="x d" style="left:28px;top:38px;font-size:13px;line-height:16px">Raw sliders respect each joint's limits unless the wizard is running.</div>
+  <div class="x tl" data-a="opensetup" style="right:28px;top:8px;height:44px;line-height:44px">Camera setup</div>
+  <div id="rawrows"></div>
+  <div class="x lb" style="left:28px;top:416px">Link lengths · mm</div>
+  <div id="advLinks" class="x" style="left:28px;top:434px;width:708px;height:48px"></div>
+ </div>
+</div>
+
+<div id="abar" class="x">
+ <div class="x lb" style="left:18px;top:30px">Speed</div>
+ <div id="seg" class="x"><span class="c0" data-a="spd" data-v="20">20</span><span class="c1" data-a="spd" data-v="60">60</span><span class="c2" data-a="spd" data-v="120">120</span><span class="c3" data-a="spd" data-v="180">180</span></div>
+ <div class="x m f" style="left:328px;top:30px;font-size:11px;line-height:11px">°/s</div>
+ <div id="acts" class="x"><div class="b" data-a="home">Start pose</div><div class="b" data-a="rest">Rest pose</div><span class="dv"></span><div class="b" data-a="wake">Wake all</div><div class="b" data-a="rlx5">Relax grip</div><div class="b am" data-a="rlxa" style="width:112px;padding:0">Relax all</div></div>
+</div>
+
+<div id="pad" style="display:none">
+ <div class="x scrim" data-a="padx" style="left:0;top:56px;width:1024px;height:280px"></div>
+ <div class="x sheet" style="left:0;top:336px;width:1024px;height:264px">
+  <div id="padn" class="x lb" style="left:16px;top:18px;width:390px;overflow:hidden"></div>
+  <div id="padv" class="x m" style="left:12px;top:40px;max-width:396px"></div>
+  <div id="padh" class="x d" style="left:16px;top:92px;width:390px;font-size:13px;line-height:18px"></div>
+  <div class="x b" data-a="pk" data-k="cancel" style="left:16px;top:200px;width:120px">Cancel</div>
+  <div id="padkeys"></div>
+ </div>
+</div>
+
+<div id="bar" class="x">
+ <div class="x brand m">ARM-6</div>
+ <div id="tabs" class="x"><span class="tab sel" data-a="tab" data-t="move">Move</span><span class="tab" data-a="tab" data-t="cam">Camera</span><span class="tab" data-a="tab" data-t="cal">Calibrate</span></div>
+ <div id="stat" class="x"><span id="warn" class="wchip"><span class="sq"></span><span id="warnt"></span></span><span id="link"><span id="ldot" class="dot"></span><span id="lt" class="m">connecting</span></span></div>
+ <div id="live" class="x" data-a="live"><span class="x t">LIVE</span><span class="sw" style="left:63px;top:12px"><i></i></span></div>
+ <div id="stop" class="x" data-a="stop"><span class="x s1">STOP</span><span class="x s2 m">ESC</span></div>
+</div>
+
+</div>
 <script>
 // Plain ES5 on purpose: this page must also run in the Android 4.2 WebView (no arrow functions,
 // let, template literals, WebSocket or pointer events there).
 var cfg=null, st=null;
 function $(id){return document.getElementById(id);}
 function each(a,fn){for(var i=0;i<a.length;i++)fn(a[i],i);}
-function tog(el,cls,on){el.classList[on?'add':'remove'](cls);}
+// class toggle that only touches the DOM when the state really changes
+function tog(el,c,on){on=!!on;if(el.classList.contains(c)!==on)el.classList[on?'add':'remove'](c);}
 function hyp(a,b){return Math.sqrt(a*a+b*b);}
 function now(){return window.performance&&performance.now?performance.now():Date.now();}
 function closest(el,tag){tag=tag.toUpperCase();while(el&&el.nodeType==1){if(el.tagName==tag)return el;el=el.parentNode;}return null;}
-function onRange(el,fn){el.addEventListener('input',fn);el.addEventListener('change',fn);}  // old WebKit only fires change
+function onRange(el,fn){el.addEventListener('input',fn);el.addEventListener('change',fn);}
 // DOM writes only when something changed: on a slow tablet every write costs a relayout
 function txt(el,s){s=String(s);if(el._t!==s){el._t=s;el.textContent=s;}}
+function html(el,s){if(el._h!==s){el._h=s;el.innerHTML=s;}}
 function cls(el,c){if(el.className!==c)el.className=c;}
 function show(el,on){var d=on?'':'none';if(el.style.display!==d)el.style.display=d;}
 function val(el,v,tol){if(!(Math.abs(el.value-v)<=(tol||0.5)))el.value=v;}
-function shown(id){return $(id).style.display!='none';}
+function tf(el,v){if(el._tf===v)return;el._tf=v;el.style.webkitTransform=v;el.style.transform=v;}
+// glyphs that Roboto/Droid may lack fall back to plain text (a missing glyph measures like a private-use char)
+var GC=document.createElement('canvas').getContext('2d');GC.font='20px Roboto,"Droid Sans",sans-serif';
+var TOFU=GC.measureText('').width;
+function G(ch,fb){var w=GC.measureText(ch).width;return w>0&&w!=TOFU?ch:fb;}
+var MINUS=G('−','-'), LARR=G('←','<'), RARR=G('→','>');
+function sgn(s){return s.charAt(0)=='-'?MINUS+s.slice(1):s;}
+function f0(v){return sgn(String(Math.round(v)));}
+function f1(v){if(Math.abs(v)<0.05)v=0;return sgn(v.toFixed(1));}
+
 // Press/drag/release on el, with pointer events where they exist, else touch + mouse.
 // h.down(id,e) returns true to claim the press, h.move(id,e) true if it used the move, h.up(id).
 function track(el,h){
@@ -162,12 +268,46 @@ function track(el,h){
   document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);});
 }
 
+// ---- buttons: one delegated listener for every element with data-a="<action>" ----
+// The press shows at once (.prs class on touch-down). tap() fires on release inside the element
+// (no 300 ms click delay, no ghost click: touchstart is preventDefault-ed), down() fires on
+// touch-down, up() on any release, cancel or slide-off (hold-to-move buttons use it as a dead-man).
+var ACTS={}, presses={};
+function act(name,h){ACTS[name]=h;}
+function actEl(t){if(t&&t.nodeType==3)t=t.parentNode;for(var el=t;el&&el.nodeType==1;el=el.parentNode){var a=el.getAttribute('data-a');if(a)return ACTS[a]?el:null;}return null;}
+function pdown(id,e){
+ var el=actEl(e.target);if(!el||el.classList.contains('dis'))return false;
+ var r=el.getBoundingClientRect(),ox=window.pageXOffset,oy=window.pageYOffset,a=ACTS[el.getAttribute('data-a')];
+ presses[id]={el:el,a:a,l:r.left+ox-12,t:r.top+oy-12,r:r.right+ox+12,b:r.bottom+oy+12};
+ el.classList.add('prs');if(a.down)a.down(el,e);return true;
+}
+function pmove(id,e){var p=presses[id];if(!p)return false;if(e.pageX<p.l||e.pageX>p.r||e.pageY<p.t||e.pageY>p.b)pend(id,false);return true;}
+function pend(id,ok){var p=presses[id];if(!p)return;delete presses[id];p.el.classList.remove('prs');if(p.a.up)p.a.up(p.el);if(ok&&p.a.tap)p.a.tap(p.el);}
+track(document,{down:pdown,move:pmove,up:function(id){pend(id,true);}});
+function releaseAll(){for(var id in presses)pend(id,false);}
+window.addEventListener('blur',releaseAll);
+document.addEventListener('visibilitychange',function(){if(document.hidden)releaseAll();});
+// tap-again confirmation for risky buttons: the first tap arms it for 2 s
+function twice(el,fn){
+ if(el._arm){clearTimeout(el._arm);el._arm=null;tog(el,'arm',false);txt(el,el._lab);fn();return;}
+ if(el._lab==null)el._lab=el.textContent;txt(el,'Tap again');tog(el,'arm',true);
+ el._arm=setTimeout(function(){el._arm=null;tog(el,'arm',false);txt(el,el._lab);},2000);
+}
+
+// ---- physical keys: Esc is STOP everywhere; an open keypad gets the rest ----
+var KEYH=null;
+document.addEventListener('keydown',function(e){
+ if(e.keyCode==27||e.key=='Escape'){send({type:'stop'});e.preventDefault();return;}
+ if(KEYH)KEYH(e);
+});
+
 // ---- connection: WebSocket, or HTTP long-polling where there is none (or with ?legacy=1) ----
 var LEGACY=!window.WebSocket||/[?&]legacy=1/.test(location.search);
-var ws=null, usePoll=LEGACY, wsFails=0, listeners=[];
+var ws=null, usePoll=LEGACY, wsFails=0, listeners=[], offline=false;
 var cid=Math.random().toString(36).slice(2)+Date.now().toString(36), outq=[], posting=false;
-function emit(m){for(var i=0;i<listeners.length;i++)listeners[i](m);}
-var DRAG={planar:1,joints:1};
+function setOffline(on){if(offline!==on){offline=on;stDirty=true;schedule();}}
+function emit(m){if(offline)setOffline(false);for(var i=0;i<listeners.length;i++)listeners[i](m);}
+var DRAG={planar:1,joints:1,roll:1};
 function sameKeys(a,b){for(var k in a)if(!(k in b))return false;for(k in b)if(!(k in a))return false;return true;}
 function send(o){
  // while a POST is in flight a newer drag position replaces the queued one instead of piling up behind it
@@ -186,11 +326,11 @@ function xhr(method,url,body,done){
 }
 function pump(){
  if(posting||!outq.length)return;posting=true;var b=outq;outq=[];
- xhr('POST','/send?id='+cid,JSON.stringify(b),function(s){posting=false;if(s!=200)$('hw').textContent='disconnected';pump();});
+ xhr('POST','/send?id='+cid,JSON.stringify(b),function(s){posting=false;if(s!=200)setOffline(true);pump();});
 }
 function poll(){
  xhr('GET','/poll?id='+cid+'&t='+Date.now(),null,function(s,txt){
-  if(s!=200){$('hw').textContent='disconnected';setTimeout(poll,1000);return;}
+  if(s!=200){setOffline(true);setTimeout(poll,1000);return;}
   var a;try{a=JSON.parse(txt);}catch(e){a=[];}
   for(var i=0;i<a.length;i++)emit(a[i]);
   setTimeout(poll,100);  // the server holds the request until something changes, so this only caps the rate
@@ -202,7 +342,7 @@ function connect(){
  try{ws=new WebSocket('ws://'+location.host+'/ws');}catch(e){usePoll=true;poll();return;}
  ws.onopen=function(){opened=true;wsFails=0;};
  // a WebSocket that never opens (blocked by a proxy or the kiosk app) twice in a row: fall back to polling
- ws.onclose=function(){$('hw').textContent='disconnected';if(!opened&&++wsFails>=2)usePoll=true;setTimeout(connect,1000);};
+ ws.onclose=function(){setOffline(true);if(!opened&&++wsFails>=2)usePoll=true;setTimeout(connect,1000);};
  ws.onmessage=function(e){emit(JSON.parse(e.data));};
 }
 // ---- rendering is decoupled from messages: they only mark things dirty, render() runs at most
@@ -210,260 +350,395 @@ function connect(){
 var RENDER_MS=LEGACY?100:0, renderQueued=false, lastRender=0, renderers=[], stDirty=false;
 function schedule(){if(renderQueued)return;renderQueued=true;setTimeout(render,Math.max(0,RENDER_MS-(now()-lastRender)));}
 function render(){renderQueued=false;lastRender=now();for(var i=0;i<renderers.length;i++)renderers[i]();}
+
+// ---- the 1024x600 frame: native on the tablet, scaled to fit anywhere else ----
+function fitApp(){
+ var W=window.innerWidth,H=window.innerHeight,app=$('app');
+ if(W==1024&&H==600){tf(app,'');return;}
+ var s=Math.min(W/1024,H/600),x=Math.round((W-1024*s)/2),y=Math.round((H-600*s)/2);
+ tf(app,'translate('+x+'px,'+y+'px) scale('+s+')');
+}
+fitApp();
+window.addEventListener('resize',fitApp);window.addEventListener('orientationchange',fitApp);
+// stray swipes must not pan or bounce the page: only .scroll boxes get the touchmove
+var passiveOK=false;try{window.addEventListener('x',null,Object.defineProperty({},'passive',{get:function(){passiveOK=true;}}));}catch(e){}
+document.addEventListener('touchmove',function(e){
+ for(var el=e.target;el&&el.nodeType==1;el=el.parentNode)if(el.classList.contains('scroll'))return;
+ e.preventDefault();
+},passiveOK?{passive:false}:false);
+
+// ---- tabs ----
+var TAB='move', VIEWS={move:$('move'),cal:$('cal')}, tabFns=[];
+function setTab(t){
+ if(!VIEWS[t])return;var prev=TAB;TAB=t;
+ each(document.querySelectorAll('.tab'),function(x){tog(x,'sel',x.getAttribute('data-t')==t);});
+ for(var k in VIEWS)show(VIEWS[k],k==t);
+ show($('abar'),t!='cal');
+ if(t=='move'){send({type:'unlock',on:false});send({type:'resync'});}else if(t=='cal'&&wz>=0)send({type:'unlock',on:true});
+ for(var i=0;i<tabFns.length;i++)tabFns[i](t,prev);
+ drawKey=null;stDirty=true;schedule();
+}
+act('tab',{tap:function(el){setTab(el.getAttribute('data-t'));}});
+
+// ---- custom slider (native range inputs on 4.2: tiny thumb, change-only, no vertical) ----
+// o: {min,max,step,vertical,size (rail length px),thumb (thumb length px),onInput(v),onEnd(v)}
+function Slider(rail,o){
+ var th=rail.querySelector('.th'),travel=o.size-o.thumb,S={v:null,drag:null,min:o.min,max:o.max};
+ function place(v){var t=(v-S.min)/(S.max-S.min);t=t<0?0:t>1?1:t;var px=Math.round(o.vertical?(1-t)*travel:t*travel);
+  tf(th,o.vertical?'translate3d(0,'+px+'px,0)':'translate3d('+px+'px,0,0)');}
+ S.set=function(v){if(S.drag!=null||v==null||v===S.v)return;S.v=v;place(v);};
+ S.range=function(a,b){S.min=a;S.max=b;if(S.v!=null)place(S.v);};
+ var box=null;
+ function at(e){
+  var f=o.vertical?(e.pageY-box.t)/box.k:(e.pageX-box.l)/box.k,t=(f-o.thumb/2)/travel;t=t<0?0:t>1?1:t;if(o.vertical)t=1-t;
+  var v=S.min+t*(S.max-S.min),st=o.step||1;v=Math.round(v/st)*st;
+  if(v!==S.v){S.v=v;place(v);if(o.onInput)o.onInput(v);}
+ }
+ track(rail,{
+  down:function(id,e){if(S.drag!=null||(o.ok&&!o.ok()))return false;var r=rail.getBoundingClientRect();
+   box={l:r.left+window.pageXOffset,t:r.top+window.pageYOffset,k:(o.vertical?r.height:r.width)/o.size};S.drag=id;at(e);return true;},
+  move:function(id,e){if(S.drag!==id)return false;at(e);return true;},
+  up:function(id){if(S.drag!==id)return;S.drag=null;if(o.onEnd)o.onEnd(S.v);}
+ });
+ return S;
+}
+// a horizontal slider's markup (rail w x 56, 32x40 thumb)
+function hSliderHTML(id,l,t,w){return '<div id="'+id+'" class="x sl" style="left:'+l+'px;top:'+t+'px;width:'+w+'px;height:56px"><div class="tk" style="left:0;top:27px;width:'+w+'px;height:2px"></div>'+
+ '<div class="th" style="top:8px;width:32px;height:40px"><i style="left:12px;top:10px;width:2px;height:20px"></i><i style="left:17px;top:10px;width:2px;height:20px"></i></div></div>';}
+
+// ---- numeric keypad sheet, for every numeric field (tap a .fld[data-f]) ----
+// field(id,{label,hint,get(),set(v),blank}) registers one; set() gets a number, or '' when blank is allowed.
+var FLD={}, pad={id:null,s:'',fresh:true};
+function field(id,o){FLD[id]=o;}
+function fieldHTML(id,l,t,w){return '<div id="F'+id+'" class="x fld m" data-a="fld" data-f="'+id+'" style="left:'+l+'px;top:'+t+'px;width:'+w+'px"></div>';}
+function fieldShow(id,s){var el=$('F'+id);if(el&&pad.id!==id)txt(el,s);}
+(function(){
+ var h='',K=[['1','2','3'],['4','5','6'],['7','8','9'],['pm','0','.']];
+ for(var r=0;r<4;r++)for(var c=0;c<3;c++){var k=K[r][c];
+  h+='<div class="ky m" data-a="pk" data-k="'+k+'" style="left:'+(420+c*88)+'px;top:'+(12+r*64)+'px;width:80px;height:56px;line-height:54px">'+(k=='pm'?'±':k)+'</div>';}
+ h+='<div class="ky" data-a="pk" data-k="bs" style="left:692px;top:12px;width:140px;height:56px;line-height:54px">'+G('⌫','DEL')+'</div>';
+ h+='<div class="ky sp" data-a="pk" data-k="clr" style="left:692px;top:76px;width:140px;height:56px;line-height:54px">Clear</div>';
+ h+='<div class="ky sp go" data-a="pk" data-k="set" style="left:692px;top:140px;width:140px;height:120px;line-height:118px">Set</div>';
+ $('padkeys').innerHTML=h;
+})();
+function padShow(){var el=$('padv');txt(el,pad.s===''?' ':sgn(pad.s));tog(el,'fresh',pad.fresh&&pad.s!=='');}
+function openPad(id){
+ var o=FLD[id];if(!o)return;if(pad.id)closePad();
+ pad.id=id;var v=o.get();pad.s=v==null?'':String(v);pad.fresh=true;
+ txt($('padn'),o.label);txt($('padh'),o.hint||'');padShow();
+ var f=$('F'+id);if(f)tog(f,'ed',true);
+ show($('pad'),true);KEYH=padKeyDown;
+}
+function closePad(){var f=pad.id&&$('F'+pad.id);if(f)tog(f,'ed',false);pad.id=null;show($('pad'),false);KEYH=null;stDirty=true;schedule();}
+function padPress(k){
+ if(k=='cancel'){closePad();return;}
+ if(k=='set'){var o=FLD[pad.id],s=pad.s;closePad();if(s===''||s=='-'){if(o.blank)o.set('');return;}var v=parseFloat(s);if(!isNaN(v))o.set(v);return;}
+ if(k=='clr')pad.s='';
+ else if(k=='bs')pad.s=pad.s.slice(0,-1);
+ else if(k=='pm')pad.s=pad.s.charAt(0)=='-'?pad.s.slice(1):'-'+pad.s;
+ else{
+  if(pad.fresh)pad.s='';
+  if(k=='.'){if(pad.s.indexOf('.')>=0)return;if(pad.s==''||pad.s=='-')pad.s+='0';}
+  if(pad.s.replace('-','').length<8)pad.s+=k;
+ }
+ pad.fresh=false;padShow();
+}
+function padKeyDown(e){
+ var c=e.keyCode,k=e.key;
+ if(c==13)padPress('set');else if(c==8)padPress('bs');else if(c==46)padPress('clr');
+ else if(k&&/^[0-9.]$/.test(k))padPress(k);else if(k=='-')padPress('pm');
+ else if(c>=48&&c<=57)padPress(String(c-48));else if(c>=96&&c<=105)padPress(String(c-96));
+ else return;
+ e.preventDefault();
+}
+act('fld',{tap:function(el){openPad(el.getAttribute('data-f'));}});
+act('pk',{down:function(el){padPress(el.getAttribute('data-k'));}});
+act('padx',{tap:closePad});
+
 window.ARM={send:send,listen:function(fn){listeners.push(fn);},onRender:function(fn){renderers.push(fn);},schedule:schedule,
- legacy:LEGACY,track:track,each:each,tog:tog,closest:closest,onRange:onRange,txt:txt,show:show};
+ legacy:LEGACY,track:track,each:each,tog:tog,closest:closest,onRange:onRange,txt:txt,html:html,cls:cls,show:show,tf:tf,$:$,
+ act:act,twice:twice,Slider:Slider,hSliderHTML:hSliderHTML,field:field,fieldHTML:fieldHTML,fieldShow:fieldShow,pad:pad,
+ G:G,sgn:sgn,f0:f0,f1:f1,MINUS:MINUS,RARR:RARR,LARR:LARR,sendDrag:function(s,m){sendDrag(s,m);},flush:function(){flush();},
+ addView:function(name,el){VIEWS[name]=el;},onTab:function(fn){tabFns.push(fn);},tab:function(){return TAB;},setTab:setTab,
+ setKeys:function(fn){KEYH=fn;},openSetup:null};
 
 listeners.push(function(m){
- if(m.type=='cfg'){cfg=m.cfg;drawKey=null;buildCal();setRanges();}
- else if(m.type=='tool'){}
-
+ if(m.type=='cfg'){cfg=m.cfg;drawKey=null;drawStatic();buildCal();setRanges();}
  else if(m.type=='state'){st=m;stDirty=true;}
  else return;
  schedule();
 });
 renderers.push(function(){
- if(st&&stDirty){stDirty=false;updateStatus();}
- if(shown('cal'))updateCal();
- fit();
- if(shown('move'))draw();
+ if(stDirty){stDirty=false;updateStatus();}
+ if(TAB=='cal')updateCal();
+ if(TAB=='move')draw();
 });
 
-// ---- fixed layout: <main> fills the screen under the header; on the Move tab the two views are
-// sized so that they fill the screen exactly (no scrolling), keeping the canvases' aspect ratio
-var fitKey=null;
-function fit(){
- var mn=document.querySelector('main'),mv=shown('move'),hh=$('hdr').offsetHeight,W=window.innerWidth,H=window.innerHeight;
- var key=[W,H,hh,mv].join();
- if(key===fitKey)return;fitKey=key;
- mn.style.top=hh+'px';tog(mn,'scroll',!mv);if($('logcard'))show($('logcard'),!mv);
- if(!mv){return;}
- mn.scrollTop=0;
- // 24 main padding, 12 gap between the cards, 22 card padding+border, a few px of slack
- var h=Math.min(H-hh-24-22-4,(W-24-12-44-8)/((560+420)/460));
- h=Math.floor(Math.max(120,h));
- each([[side,560,'.sidecard'],[topv,420,'.topcard']],function(a){
-  var w=Math.floor(h*a[1]/460),card=document.querySelector(a[2]);
-  a[0].style.width=w+'px';a[0].style.height=h+'px';card.style.width=(w+22)+'px';card.style.flex='none';
- });
-}
-window.addEventListener('resize',function(){fitKey=null;schedule();});
-window.addEventListener('orientationchange',function(){fitKey=null;schedule();});
-// stray swipes must not pan or bounce the page: only scrollable places (and sliders) get the touchmove
-var passiveOK=false;try{window.addEventListener('x',null,Object.defineProperty({},'passive',{get:function(){passiveOK=true;}}));}catch(e){}
-document.addEventListener('touchmove',function(e){
- for(var el=e.target;el&&el.nodeType==1;el=el.parentNode){
-  if(el.tagName=='INPUT'||el.tagName=='TEXTAREA'||el.id=='logbox'||(el.tagName=='MAIN'&&el.classList.contains('scroll')))return;
- }
- e.preventDefault();
-},passiveOK?{passive:false}:false);
+// ---- top bar + Move tab readouts ----
+var LINK={on:['dot g','ESP32'],limp:['dot a','ESP32 · limp'],lost:['dot a','USB lost'],sim:['dot','SIM'],off:['dot a','OFFLINE'],wait:['dot','connecting']};
+var rollS=Slider($('rollS'),{vertical:true,size:380,thumb:32,min:0,max:180,step:1,
+ onInput:function(v){txt($('rollv'),f0(v)+'°');sendDrag('roll',{type:'roll',angle:v});},onEnd:function(){flush();}});
 function setRanges(){
- $('roll').min=cfg.joints[4].min;$('roll').max=cfg.joints[4].max;
- $('grip').min=0;$('grip').max=180; // Full range for 360 servo
+ var J=cfg.joints[4];rollS.range(J.min,J.max);
+ var t=(90-J.min)/(J.max-J.min);$('rollTick').style.top=Math.round(16+(1-(t<0?0:t>1?1:t))*348)+'px';
 }
-function gripText(v){return v > 95 ? 'OPENING' : (v < 85 ? 'CLOSING' : 'BRAKED');}
+var SPEEDS=[20,60,120,180], spLocal=null;
 function updateStatus(){
- each(['roll'],function(k){var e=$(k);if(document.activeElement!==e){val(e,st.tool[k]);txt($(k+'v'),Math.round(st.tool[k])+'°');}});
- // Gripper specific label updates
- if(document.activeElement!==$('grip')) {val($('grip'), st.tool.grip);
-   txt($('gripv'), gripText(st.tool.grip));
+ var l=offline?LINK.off:!st?LINK.wait:st.hw?(st.engaged?LINK.on:LINK.limp):(st.lost?LINK.lost:LINK.sim);
+ cls($('ldot'),l[0]);txt($('lt'),l[1]);
+ if(!st)return;
+ tog($('live'),'on',st.live);
+ tog($('warn'),'on',st.reach||st.limited);txt($('warnt'),st.reach?'Out of reach':'Joint limit');
+ var sp=spLocal!=null?spLocal:Math.round(st.speed);
+ each($('seg').childNodes,function(c){tog(c,'sel',+c.getAttribute('data-v')===sp);});
+ if(spLocal!=null&&Math.round(st.speed)===spLocal)spLocal=null;
+ if(TAB=='move'){
+  var t=st.tool;
+  txt($('rx'),f0(t.x));txt($('ry'),f0(t.y));txt($('rz'),f0(t.z));txt($('rp'),f0(t.pitch)+'°');
+  if(rollS.drag==null){rollS.set(Math.round(t.roll));txt($('rollv'),f0(t.roll)+'°');}
+  txt($('basev'),f0(st.ang[0])+'°');
+  show($('limp'),!st.live);txt($('limpT'),st.hw&&!st.engaged?'Servos limp':'Live is off');
+  gripPaint();
  }
-
- txt($('live'),'Live: '+(st.live?'ON':'OFF'));tog($('live'),'on',st.live);
- txt($('hw'),st.hw?(st.engaged?'ESP32 connected':'ESP32 connected · servos OFF (limp) until you press Live'):(st.lost?'USB LOST - reconnecting… (Live off)':'simulation (no ESP32)'));cls($('hw'),'chip '+(st.hw?(st.engaged?'ok':'warn'):(st.lost?'warn':'')));
- var w=[];if(st.reach)w.push('out of reach');if(st.limited)w.push('joint limit hit');
- show($('warn'),w.length);txt($('warn'),w.join(' · '));cls($('warn'),'chip warn');
 }
 
-$('live').onclick=function(){send({type:'live',on:!(st&&st.live)});};$('rlx5').onclick=function(){send({type:'relax',mask:32});};$('wake').onclick=function(){send({type:'relax',mask:0});};$('rlxa').onclick=function(){send({type:'relax',mask:63});};
-$('rest').onclick=function(){send({type:'rest'});};$('home').onclick=function(){send({type:'home'});};
-onRange($('speed'),function(e){$('speedv').textContent=e.target.value+'°/s';send({type:'speed',dps:+e.target.value});});
-each(document.querySelectorAll('.tab'),function(b){b.onclick=function(){
- each(document.querySelectorAll('.tab'),function(x){tog(x,'sel',x==b);});
- $('move').style.display=b.getAttribute('data-tab')=='move'?'':'none';$('cal').style.display=b.getAttribute('data-tab')=='cal'?'':'none';
- if(b.getAttribute('data-tab')=='move'){send({type:'unlock',on:false});send({type:'resync'});}else if(wz>=0)send({type:'unlock',on:true});schedule();};});
+act('stop',{down:function(){send({type:'stop'});}});
+act('live',{tap:function(){send({type:'live',on:!(st&&st.live)});}});
+act('home',{tap:function(){send({type:'home'});}});
+act('rest',{tap:function(){send({type:'rest'});}});
+act('wake',{tap:function(){send({type:'relax',mask:0});}});
+act('rlx5',{tap:function(){send({type:'relax',mask:32});}});
+act('rlxa',{tap:function(el){twice(el,function(){send({type:'relax',mask:63});});}});
+act('spd',{down:function(el){var v=+el.getAttribute('data-v');spLocal=v;send({type:'speed',dps:v});stDirty=true;schedule();}});
 
-each(['roll'],function(k){onRange($(k),function(e){$(k+'v').textContent=e.target.value+'°';send({type:k,angle:+e.target.value});});});
-
-// --- GRIPPER DEAD-MAN SWITCH LOGIC ---
-var gripSlider = $('grip');
-gripSlider.value = 90;
-onRange(gripSlider, function(e) {
-  var val = +e.target.value;
-  $('gripv').textContent = gripText(val);
-  send({type:'grip', angle: val});
-});
-
-function stopGrip() {
-  gripSlider.value = 90;
-  $('gripv').textContent = 'BRAKED';
-  send({type:'grip', angle: 90}); // Active electronic braking
-}
-
-// every kind of release, so the brake fires whichever events this browser has (repeats are harmless)
-each(['pointerup','pointercancel','touchend','touchcancel','mouseup'],function(ev){gripSlider.addEventListener(ev,stopGrip);});
-
+// ---- gripper: two hold-to-move buttons; ANY release, cancel or slide-off brakes (dead-man) ----
+// 360 servo: 90 = brake, above opens, below closes. Holding longer goes faster: 90+-20 ramps to 90+-45 over 600 ms.
+var grip={dir:0,t0:0,iv:null};
+function gripSend(){var k=Math.min(1,(now()-grip.t0)/600);send({type:'grip',angle:Math.round(90+grip.dir*(20+25*k))});
+ if(k>=1&&grip.iv){clearInterval(grip.iv);grip.iv=null;}}
+function gripDown(d){if(grip.iv)clearInterval(grip.iv);grip.dir=d;grip.t0=now();gripSend();grip.iv=setInterval(gripSend,150);gripPaint();}
+function stopGrip(){if(grip.iv){clearInterval(grip.iv);grip.iv=null;}grip.dir=0;send({type:'grip',angle:90});gripPaint();}
+function gripPaint(){var g=grip.dir?90+grip.dir:(st?st.tool.grip:90),s=g>95||grip.dir>0?'OPENING':g<85||grip.dir<0?'CLOSING':'BRAKED';
+ txt($('gst'),s);tog($('gst'),'mv',s!='BRAKED');}
+act('grip',{down:function(el){gripDown(+el.getAttribute('data-d'));},up:stopGrip});
 
 // ---- throttled drag sending (25 Hz) ----
-// one pending slot per view, so a side-view finger and a top-view finger never overwrite each other
+// one pending slot per source, so a side-view finger and a top-view finger never overwrite each other
 var lastSend=0,pending={},timer=null;
 function flush(){if(timer){clearTimeout(timer);timer=null;}var any=false;for(var k in pending){send(pending[k]);any=true;}pending={};if(any)lastSend=now();}
 function sendDrag(src,m){pending[src]=m;var d=now()-lastSend;if(d>=40)flush();else if(!timer)timer=setTimeout(flush,40-d);}
 
-// ---- drawing ----
+// ---- drawing: canvases at 1x; the static layer is drawn once offscreen and blitted each frame ----
 var side=$('side'),topv=$('top'),sc=side.getContext('2d'),tc=topv.getContext('2d');
+var SK=side.width/560, TK=topv.width/420;   // logical 560x460 / 420x460 views fitted to the panels
+var sideBg=document.createElement('canvas'),topBg=document.createElement('canvas');
+sideBg.width=side.width;sideBg.height=side.height;topBg.width=topv.width;topBg.height=topv.height;
 var SS=0.9, SO={x:170,y:430}, TS=0.95, TO={x:210,y:420};
 function sp(r,z){return [SO.x+r*SS,SO.y-z*SS];}
 function tp(x,y){return [TO.x-y*TS,TO.y-x*TS];}
-// Tool centre point = last point of the chain. fk() appends it after the L3 tip;
-// the two coincide while config.json has no tool offset set.
-function tipOf(pts){return pts[pts.length-1];}
 function setDash(c,d){if(c.setLineDash)c.setLineDash(d);else if('webkitLineDash' in c)c.webkitLineDash=d;}
-function line(c,pts,color,w,dash){c.strokeStyle=color;c.lineWidth=w;setDash(c,dash||[]);c.lineCap='round';c.lineJoin='round';c.beginPath();pts.forEach(function(p,i){if(i)c.lineTo(p[0],p[1]);else c.moveTo(p[0],p[1]);});c.stroke();setDash(c,[]);}
-function dot(c,p,r,fill,stroke){c.beginPath();c.arc(p[0],p[1],r,0,7);c.fillStyle=fill;c.fill();if(stroke){c.strokeStyle=stroke;c.lineWidth=2;c.stroke();}}
+function line(c,pts,color,w,dash){c.strokeStyle=color;c.lineWidth=w;setDash(c,dash||[]);c.lineCap='round';c.lineJoin='round';c.beginPath();for(var i=0;i<pts.length;i++){if(i)c.lineTo(pts[i][0],pts[i][1]);else c.moveTo(pts[i][0],pts[i][1]);}c.stroke();if(dash)setDash(c,[]);}
+function dot(c,p,r,fill,stroke,w){c.beginPath();c.arc(p[0],p[1],r,0,7);c.fillStyle=fill;c.fill();if(stroke){c.strokeStyle=stroke;c.lineWidth=w||2;c.stroke();}}
+function ring(c,p,r,dash,color,w){c.beginPath();c.arc(p[0],p[1],r,0,Math.PI*2);c.strokeStyle=color;c.lineWidth=w;setDash(c,dash);c.stroke();setDash(c,[]);}
 function diamond(c,p,r,fill,stroke){c.beginPath();c.moveTo(p[0],p[1]-r);c.lineTo(p[0]+r,p[1]);c.lineTo(p[0],p[1]+r);c.lineTo(p[0]-r,p[1]);c.closePath();c.fillStyle=fill;c.fill();c.strokeStyle=stroke;c.lineWidth=2;c.stroke();}
+function drawStatic(){
+ var L=cfg.links,R=L.L1+L.L2,c=sideBg.getContext('2d');
+ c.setTransform(1,0,0,1,0,0);c.fillStyle='#000';c.fillRect(0,0,sideBg.width,sideBg.height);c.setTransform(SK,0,0,SK,0,0);
+ line(c,[[0,SO.y],[560,SO.y]],'#333',2);
+ ring(c,sp(0,L.L0),R*SS,[4,6],'#242424',1.5);
+ c.fillStyle='#141414';c.fillRect(SO.x-22,SO.y-14,44,14);c.strokeStyle='#3a3a3a';c.lineWidth=1;c.strokeRect(SO.x-22,SO.y-14,44,14);
+ c=topBg.getContext('2d');
+ c.setTransform(1,0,0,1,0,0);c.fillStyle='#000';c.fillRect(0,0,topBg.width,topBg.height);c.setTransform(TK,0,0,TK,0,0);
+ ring(c,[TO.x,TO.y],(R+L.L3)*TS,[4,6],'#1f1f1f',1.5);
+ line(c,[[TO.x,TO.y],[TO.x,40]],'#1f1f1f',1.5);
+ ring(c,[TO.x,TO.y],TR,[],'#2a2a2a',2);
+ c.fillStyle='#141414';c.fillRect(TO.x-16,TO.y-14,32,28);c.strokeStyle='#3a3a3a';c.lineWidth=1;c.strokeRect(TO.x-16,TO.y-14,32,28);
+}
 function sideHandles(){if(!st)return[];var q=st.pl_tgt,P=function(a){return sp(a[0],a[1]);},mid=[(q[3][0]+q[4][0])/2,(q[3][1]+q[4][1])/2];
- return [{n:'tip',px:P(q[4]),rad:16},{n:'dir',px:P(mid),rad:12},{n:'wrist',px:P(q[3]),rad:14},{n:'elbow',px:P(q[2]),rad:14}];}
+ return [{n:'tip',px:P(q[4]),rad:20},{n:'dir',px:P(mid),rad:12},{n:'wrist',px:P(q[3]),rad:14},{n:'elbow',px:P(q[2]),rad:14}];}
 var drawKey=null;
 function draw(){
  if(!cfg)return;
- var key=st?st.cur.join()+'|'+st.tgt.join()+'|'+st.live:'-';if(key===drawKey)return;drawKey=key;var L=cfg.links,R=L.L1+L.L2;
- sc.clearRect(0,0,560,460);tc.clearRect(0,0,420,460);
- line(sc,[sp(-190,0),sp(450,0)],'#3a4048',2);sc.fillStyle='#8a919b';sc.fillText('SIDE: drag the blue tip, or the elbow / wrist dots, or the diamond (aims the gripper)',10,18);
- var o=sp(0,L.L0);sc.beginPath();sc.arc(o[0],o[1],R*SS,0,Math.PI*2);sc.strokeStyle='#2c3138';setDash(sc,[4,6]);sc.stroke();setDash(sc,[]);
- tc.fillStyle='#8a919b';tc.fillText('TOP: drag the blue dial handle (turns the base only)',10,18);
- tc.beginPath();tc.arc(TO.x,TO.y,(R+L.L3)*TS,0,Math.PI*2);tc.strokeStyle='#2c3138';setDash(tc,[4,6]);tc.stroke();setDash(tc,[]);
+ var key=st?st.cur.join()+'|'+st.tgt.join()+'|'+st.live:'-';if(key===drawKey)return;drawKey=key;
+ sc.setTransform(1,0,0,1,0,0);sc.drawImage(sideBg,0,0);tc.setTransform(1,0,0,1,0,0);tc.drawImage(topBg,0,0);
  if(!st)return;
- var SP=function(a){return a.map(function(q){return sp(q[0],q[1]);});},TP=function(a){return a.map(function(p){return tp(p[0],p[1]);});},col=st.live?'#38c172':'#8a919b';
- line(sc,SP(st.pl_tgt),'#4a5666',3,[5,5]);line(tc,TP(st.pts_tgt),'#4a5666',3,[5,5]);
- line(sc,SP(st.pl_cur),col,7);line(tc,TP(st.pts_cur),col,7);
- SP(st.pl_cur).forEach(function(p){dot(sc,p,5,'#14161a');});TP(st.pts_cur).forEach(function(p){dot(tc,p,5,'#14161a');});
- each(sideHandles(),function(h){if(h.n=='tip')dot(sc,h.px,h.rad,'rgba(78,161,255,.4)','#4ea1ff');else if(h.n=='dir')diamond(sc,h.px,h.rad,'rgba(240,160,48,.45)','#f0a030');else dot(sc,h.px,h.rad,'rgba(255,255,255,.15)','#e6e8eb');});
- tc.beginPath();tc.arc(TO.x,TO.y,TR,0,Math.PI*2);tc.strokeStyle='#262b33';tc.lineWidth=2;tc.stroke();
- dot(tc,topHandle(),HR,'rgba(78,161,255,.4)','#4ea1ff');
+ sc.setTransform(SK,0,0,SK,0,0);tc.setTransform(TK,0,0,TK,0,0);
+ var i,live=st.live,col=live?'#fff':'#3a3a3a',pc=[],tcur=[];
+ for(i=0;i<st.pl_cur.length;i++)pc.push(sp(st.pl_cur[i][0],st.pl_cur[i][1]));
+ for(i=0;i<st.pts_cur.length;i++)tcur.push(tp(st.pts_cur[i][0],st.pts_cur[i][1]));
+ if(live){
+  var pg=[],tg=[];
+  for(i=0;i<st.pl_tgt.length;i++)pg.push(sp(st.pl_tgt[i][0],st.pl_tgt[i][1]));
+  for(i=0;i<st.pts_tgt.length;i++)tg.push(tp(st.pts_tgt[i][0],st.pts_tgt[i][1]));
+  line(sc,pg,'#555',3,[6,6]);line(tc,tg,'#555',3,[6,6]);
+ }
+ line(sc,pc,col,8);line(tc,tcur,col,8);
+ for(i=1;i<4;i++)dot(sc,pc[i],5,'#000');   // shoulder, elbow, wrist
+ if(!live)return;
+ for(i=2;i<4;i++)dot(tc,tcur[i],5,'#000');
+ each(sideHandles(),function(h){
+  if(h.n=='tip'){dot(sc,h.px,20,'rgba(255,255,255,.18)','#fff',2.5);dot(sc,h.px,4,'#fff');}
+  else if(h.n=='dir')diamond(sc,h.px,12,'rgba(255,176,32,.3)','#ffb020');
+  else dot(sc,h.px,14,'rgba(255,255,255,.1)','#fff',2);
+ });
+ var th=topHandle();dot(tc,th,HR,'rgba(255,255,255,.18)','#fff',2.5);dot(tc,th,4,'#fff');
 }
-// canvas pixel under a mouse event / Touch (page coordinates: old Android WebKit gets clientX wrong)
-function pos(cv,e){var b=cv.getBoundingClientRect(),x=e.pageX-(b.left+window.pageXOffset),y=e.pageY-(b.top+window.pageYOffset);return[x*cv.width/b.width,y*cv.height/b.height];}
+$('sideHint').textContent='drag tip, elbow, wrist · '+(G('◆','')?'◆ aims':'the amber handle aims')+' the gripper';
+// canvas point (logical units) under a mouse event / Touch (page coordinates: old Android WebKit gets clientX wrong)
+function pos(cv,e,k){var b=cv.getBoundingClientRect(),x=e.pageX-(b.left+window.pageXOffset),y=e.pageY-(b.top+window.pageYOffset);return[x*cv.width/b.width/k,y*cv.height/b.height/k];}
 var D=180/Math.PI;
 function nrm(a){return ((a+180)%360+360)%360-180;}
-var dragSide = null, dragTop = null;
-
+var dragSide=null, dragTop=null;
 function sideDrag(n,r,z){
  var L=cfg.links,A=st.ang,q=st.pl_tgt;
- if(n=='tip'){
-  // Side view sets reach and height only; the server leaves the base where it is, so the top
-  // view can turn it with a second finger at the same time
-  sendDrag('side',{type:'planar', r:Math.max(0, r), z:Math.max(5, z)});
- }
- else if(n=='elbow'){sendDrag('side',{type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)});}
+ // Side view sets reach and height only; the server leaves the base where it is, so the top
+ // view can turn it with a second finger at the same time
+ if(n=='tip')sendDrag('side',{type:'planar',r:Math.max(0,r),z:Math.max(5,z)});
+ else if(n=='elbow')sendDrag('side',{type:'joints',alpha:nrm(90-Math.atan2(z-L.L0,r)*D)});
  else if(n=='wrist'){var e=q[2];sendDrag('side',{type:'joints',beta:nrm((90-A[1])-Math.atan2(z-e[1],r-e[0])*D)});}
  else if(n=='dir'){var w=q[3];sendDrag('side',{type:'joints',gamma:nrm((90-A[1]-A[2])-Math.atan2(z-w[1],r-w[0])*D)});}
 }
-
-// Side Canvas Touch
+// handles exist only while LIVE is on (the limp state shows none)
 track(side,{
  down:function(id,e){
-  if(!st)return false; var p=pos(side,e), hs=sideHandles();
+  if(!st||!st.live||dragSide)return false;var p=pos(side,e,SK),hs=sideHandles();
   for(var i=0;i<hs.length;i++){var h=hs[i];
-   if(hyp(p[0]-h.px[0],p[1]-h.px[1])<h.rad+10){dragSide={id:id, n:h.n, off:[h.px[0]-p[0],h.px[1]-p[1]]};return true;}
+   if(hyp(p[0]-h.px[0],p[1]-h.px[1])<h.rad+10){dragSide={id:id,n:h.n,off:[h.px[0]-p[0],h.px[1]-p[1]]};return true;}
   }
   return false;
  },
  move:function(id,e){
-  if(!dragSide || dragSide.id !== id)return false;
-  var p=pos(side,e), q=[p[0]+dragSide.off[0], p[1]+dragSide.off[1]];
+  if(!dragSide||dragSide.id!==id)return false;
+  var p=pos(side,e,SK),q=[p[0]+dragSide.off[0],p[1]+dragSide.off[1]];
   sideDrag(dragSide.n,(q[0]-SO.x)/SS,(SO.y-q[1])/SS);return true;
  },
- up:function(id){if(dragSide && dragSide.id === id){ dragSide = null; flush(); }}
+ up:function(id){if(dragSide&&dragSide.id===id){dragSide=null;flush();}}
 });
-
-// Top Canvas Touch: turns the BASE JOINT ONLY. The finger's change in bearing around the base is
-// added to the base angle it had at touch-down; shoulder, elbow and wrist are not sent, so the reach
-// and the height stay exactly as they are wherever the arm points.
+// Top view turns the BASE JOINT ONLY: the finger's change in bearing around the base is added to the
+// base angle it had at touch-down, so reach and height stay exactly as they are wherever the arm points.
 function bearing(p){return Math.atan2(TO.x-p[0],TO.y-p[1])*D;}
-// The handle is a dial: it sits on the base's bearing at a FIXED distance (TR) from the base, so it never
-// slides in or out with the reach. TR fits inside the view at +/-90 deg; the clamp below only matters
-// for a base turned further than that.
-var HR=16, HM=HR+6, TR=150;
+// The handle is a dial at a FIXED distance (TR) from the base; the clamp only matters past +/-90 deg.
+var HR=20, HM=HR+6, TR=150;
 function topHandle(){
  var a=st.ang[0]/D,dx=-Math.sin(a),dy=-Math.cos(a),d=TR;
- if(dx>1e-6)d=Math.min(d,(topv.width-HM-TO.x)/dx);else if(dx<-1e-6)d=Math.min(d,(HM-TO.x)/dx);
- if(dy>1e-6)d=Math.min(d,(topv.height-HM-TO.y)/dy);else if(dy<-1e-6)d=Math.min(d,(HM-TO.y)/dy);
+ if(dx>1e-6)d=Math.min(d,(420-HM-TO.x)/dx);else if(dx<-1e-6)d=Math.min(d,(HM-TO.x)/dx);
+ if(dy>1e-6)d=Math.min(d,(460-HM-TO.y)/dy);else if(dy<-1e-6)d=Math.min(d,(HM-TO.y)/dy);
  return [TO.x+dx*d,TO.y+dy*d];
 }
 track(topv,{
  down:function(id,e){
-  if(!st)return false; var p=pos(topv,e), h=topHandle();
-  if(hyp(p[0]-h[0],p[1]-h[1])<50){dragTop={id:id, yaw0:st.ang[0], b0:bearing(p)};return true;}
+  if(!st||!st.live||dragTop)return false;var p=pos(topv,e,TK),h=topHandle();
+  if(hyp(p[0]-h[0],p[1]-h[1])<50){dragTop={id:id,yaw0:st.ang[0],b0:bearing(p)};return true;}
   return false;
  },
  move:function(id,e){
-  if(!dragTop || dragTop.id !== id)return false;
-  sendDrag('top',{type:'joints', yaw:dragTop.yaw0+nrm(bearing(pos(topv,e))-dragTop.b0)});return true;
+  if(!dragTop||dragTop.id!==id)return false;
+  sendDrag('top',{type:'joints',yaw:dragTop.yaw0+nrm(bearing(pos(topv,e,TK))-dragTop.b0)});return true;
  },
- up:function(id){if(dragTop && dragTop.id === id){ dragTop = null; flush(); }}
+ up:function(id){if(dragTop&&dragTop.id===id){dragTop=null;flush();}}
 });
 
 // ---- calibration ----
-var LK=['L0','L1','L2','L3'];
+var LK=['L0','L1','L2','L3'], LKH={L0:'table → shoulder axis',L1:'shoulder → elbow axis',L2:'elbow → wrist axis',L3:'wrist axis → gripper tip'};
+each(LK,function(k){field('lk'+k,{label:'Link '+k+' · mm',hint:LKH[k].replace('→',RARR),get:function(){return cfg?cfg.links[k]:null;},
+ set:function(v){var links={};each(LK,function(q){links[q]=cfg.links[q];});links[k]=v;send({type:'links',links:links});}});});
+function linksHTML(pre){var h='';each(LK,function(k,i){h+='<div class="x lb" style="left:'+(i*176)+'px;top:18px">'+k+'</div>'+fieldHTML(pre+k,i*176+28,0,132);});return h;}
+var rawS=[], advOn=false;
 function buildCal(){
- var t=$('caltable');if(t.getAttribute('data-built')){updateCalText();return;}t.setAttribute('data-built','1');
- cfg.joints.forEach(function(j,i){
-  var tr=document.createElement('tr');
-  tr.innerHTML='<td style="width:100px">'+i+': '+j.name+'</td><td><input type="range" min="0" max="180" step="0.5" id="raw'+i+'"></td>'+
-  '<td style="width:50px" class="mono" id="rv'+i+'"></td>'+
-  '<td style="white-space:nowrap">'+(i<4?'<button data-a="setzero" data-i="'+i+'">Set zero</button> <button data-a="flip" data-i="'+i+'">Flip</button> ':'')+
-  '<button data-a="setlim" data-w="min" data-i="'+i+'">Set min</button> <button data-a="setlim" data-w="max" data-i="'+i+'">Set max</button></td>'+
-  '<td class="mono" id="ct'+i+'" style="width:190px"></td>';t.appendChild(tr);
-  onRange(tr.querySelector('input'),function(e){send({type:'raw',servo:i,angle:+e.target.value});});
-  each(tr.querySelectorAll('button'),function(b){b.onclick=function(){send({type:b.getAttribute('data-a'),joint:i,which:b.getAttribute('data-w')});};});
- });
- var ld=$('links');each(LK,function(k){ld.insertAdjacentHTML('beforeend','<label style="width:auto">'+k+'</label><input type="number" id="lk'+k+'">');});
- each(LK,function(k){$('lk'+k).onchange=function(){var links={};each(LK,function(q){links[q]=+$('lk'+q).value;});send({type:'links',links:links});};});
+ if(!$('rawrows').getAttribute('data-built')){
+  $('rawrows').setAttribute('data-built','1');
+  var h='';
+  each(cfg.joints,function(j,i){var y=64+i*58;
+   h+='<div class="x m rawn" style="left:28px;top:'+(y+8)+'px">'+i+' '+j.name+'</div><div id="ct'+i+'" class="x m rawi" style="left:28px;top:'+(y+30)+'px"></div>'+
+    hSliderHTML('raw'+i,168,y-2,220)+'<div id="rv'+i+'" class="x m" style="left:396px;top:'+(y+16)+'px;width:50px;font-size:14px;line-height:16px">–</div>'+
+    (i<4?'<div class="x b h44" data-a="rawz" data-i="'+i+'" style="left:452px;top:'+(y+4)+'px;width:64px;padding:0">Zero</div><div class="x b h44" data-a="rawf" data-i="'+i+'" style="left:522px;top:'+(y+4)+'px;width:56px;padding:0">Flip</div>':'')+
+    '<div class="x b h44" data-a="rawl" data-w="min" data-i="'+i+'" style="left:584px;top:'+(y+4)+'px;width:56px;padding:0">Min</div><div class="x b h44" data-a="rawl" data-w="max" data-i="'+i+'" style="left:646px;top:'+(y+4)+'px;width:56px;padding:0">Max</div>';
+  });
+  $('rawrows').innerHTML=h;
+  each(cfg.joints,function(j,i){rawS[i]=Slider($('raw'+i),{size:220,thumb:32,min:0,max:180,step:0.5,
+   onInput:function(v){txt($('rv'+i),v.toFixed(0)+'°');sendDrag('raw'+i,{type:'raw',servo:i,angle:v});},onEnd:function(){flush();}});});
+  $('advLinks').innerHTML=linksHTML('lka');
+  $('wzLinks').innerHTML=linksHTML('lk');
+  each(LK,function(k){FLD['lka'+k]=FLD['lk'+k];});
+ }
  updateCalText();
 }
-function updateCalText(){wzInfo();cfg.joints.forEach(function(j,i){$('ct'+i).textContent=(i<4?'zero '+j.zero+'  sign '+(j.sign>0?'+':'−')+'  ':'')+'['+j.min+'–'+j.max+']';});
- for(var k in cfg.links)if(document.activeElement!==$('lk'+k))$('lk'+k).value=cfg.links[k];}
-function updateCal(){if(!cfg||!st)return;if(wz>=0&&$('wzang')){var s=steps[wz];if(s.j!==undefined)txt($('wzang'),'servo '+st.cur[s.j].toFixed(1)+'°');}cfg.joints.forEach(function(j,i){var s=$('raw'+i);if(s&&document.activeElement!==s)val(s,st.tgt[i],0.25);if($('rv'+i))txt($('rv'+i),st.cur[i].toFixed(0)+'°');});}
+act('rawz',{tap:function(el){send({type:'setzero',joint:+el.getAttribute('data-i')});}});
+act('rawf',{tap:function(el){send({type:'flip',joint:+el.getAttribute('data-i')});}});
+act('rawl',{tap:function(el){send({type:'setlim',joint:+el.getAttribute('data-i'),which:el.getAttribute('data-w')});}});
+function jinfo(J,i){return (i<4?'zero '+J.zero+' · sign '+(J.sign>0?'+':MINUS)+' · ':'')+J.min+'–'+J.max;}
+function updateCalText(){
+ cfg.joints.forEach(function(j,i){txt($('ct'+i),(i<4?'z '+j.zero+' '+(j.sign>0?'+':MINUS)+' · ':'')+j.min+'–'+j.max);});
+ each(LK,function(k){fieldShow('lk'+k,cfg.links[k]);fieldShow('lka'+k,cfg.links[k]);});
+ wzInfo();
+}
+function updateCal(){
+ if(!cfg||!st)return;
+ if(wz>=0){var s=steps[wz];if(s.j!==undefined)txt($('wzang'),st.cur[s.j].toFixed(1)+'°');}
+ if(advOn)cfg.joints.forEach(function(j,i){if(rawS[i]){if(rawS[i].drag==null){rawS[i].set(st.tgt[i]);txt($('rv'+i),st.cur[i].toFixed(0)+'°');}}});
+}
+act('adv',{tap:function(){advOn=!advOn;show($('advv'),advOn);show($('wizv'),!advOn);
+ txt($('advl'),advOn?LARR+' Back to guided steps':'Advanced: raw sliders & links');stDirty=true;schedule();}});
+act('opensetup',{tap:function(){if(window.ARM.openSetup)window.ARM.openSetup();}});
 
-// ---- guided wizard ----
-var linksNode=$('links');
+// ---- guided wizard: one frame, the step type only changes texts and which button set shows ----
 var REF=['the arm points straight FORWARD (up the screen in the top view)','the upper arm points straight UP (vertical)','the forearm is in a straight line with the upper arm','the gripper plate is in a straight line with the forearm'];
 var DIR=['turns LEFT (anticlockwise seen from above)','leans FORWARD','folds the forearm FORWARD / DOWN','tilts the gripper DOWN'];
 var NAMES=['Base','Shoulder','Elbow','Wrist pitch','Wrist roll'];
 var steps=[{k:'start'}];
 for(var j=0;j<4;j++)steps.push({k:'zero',j:j},{k:'dir',j:j},{k:'lim',j:j});
 steps.push({k:'lim',j:4},{k:'done'});
+var GROUPS=[{n:'Link lengths',s:0,e:0,sub:'L0–L3'},{n:'Base',s:1,e:3},{n:'Shoulder',s:4,e:6},{n:'Elbow',s:7,e:9},{n:'Wrist pitch',s:10,e:12},{n:'Wrist roll',s:13,e:13,sub:'limits'}];
+var KIND={zero:'ZERO',dir:'DIR',lim:'LIMITS'};
 var wz=-1;
-function holdBtn(el,j,dir){var iv=null;function stop(){if(iv){clearInterval(iv);iv=null;send({type:'creep',servo:j,dir:0});}}
- track(el,{down:function(){if(!iv){send({type:'creep',servo:j,dir:dir});iv=setInterval(function(){send({type:'creep',servo:j,dir:dir});},100);}return true;},up:stop});}
-function wzInfo(){if(wz<0||!cfg)return;var s=steps[wz],e=$('wzinfo');if(!e||s.j===undefined)return;var J=cfg.joints[s.j];
- e.textContent=(s.j<4?'zero '+J.zero+'  sign '+(J.sign>0?'+':'−')+'  ':'')+'limits '+J.min+' – '+J.max;}
+(function(){
+ var h='';each(GROUPS,function(g,i){h+='<div id="wr'+i+'" class="cr" data-a="wzrow" data-g="'+i+'" style="top:'+(39+i*52)+'px"><span class="dt"></span><span class="nm">'+g.n+'</span><span class="sb m"></span></div>';});
+ $('wzlist').innerHTML=h;
+ h='';for(var i=0;i<steps.length;i++)h+='<span style="left:'+(i*40)+'px"></span>';$('wzpg').innerHTML=h;
+})();
+var creep=null;
+act('creep',{down:function(el){var j=steps[wz].j,d=+el.getAttribute('data-dir');if(creep)clearInterval(creep);
+  send({type:'creep',servo:j,dir:d});creep=setInterval(function(){send({type:'creep',servo:j,dir:d});},100);},
+ up:function(){if(creep){clearInterval(creep);creep=null;send({type:'creep',servo:steps[wz].j,dir:0});}}});
+act('nud',{tap:function(el){var s=steps[wz];send({type:'nudge',servo:s.j,delta:+el.getAttribute('data-d'),joint:s.j<4});}});
+act('jp',{tap:function(el){send({type:'jointpos',joint:steps[wz].j,angle:+el.getAttribute('data-jp')});}});
+act('wzflip',{tap:function(){send({type:'flip',joint:steps[wz].j});var e=$('wzs');txt(e,'Flipped. Press BACK TO 0°, then GO TO +10° again: it should now move the other way.');tog(e,'am',true);}});
+act('wzmid',{tap:function(){send({type:'raw',servo:steps[wz].j,angle:90});}});
+function wzGo(n){if(wz<0&&n>=0)send({type:'unlock',on:true});if(n<0)send({type:'unlock',on:false});wz=n;wzRender();}
+act('wzrow',{tap:function(el){wzGo(GROUPS[+el.getAttribute('data-g')].s);}});
+act('wzback',{tap:function(){wzGo(wz-1);}});
+act('wznext',{tap:function(){if(wz<steps.length-1)wzGo(wz+1);}});
+act('wzpri',{tap:function(){
+ var k=wz<0?'intro':steps[wz].k;
+ if(k=='intro')wzGo(0);
+ else if(k=='start')send({type:'live',on:true});
+ else if(k=='zero')send({type:'setzero',joint:steps[wz].j});
+ else if(k=='dir')wzGo(wz+1);
+ else if(k=='done'){wzGo(-1);setTab('move');}
+}});
+function wzInfo(){if(wz<0||!cfg)return;var s=steps[wz];if(s.j===undefined)return;txt($('wzinfo'),jinfo(cfg.joints[s.j],s.j));}
 function wzRender(){
- var box=$('wiz');document.querySelector('#cal details').appendChild(linksNode);
- if(wz<0){box.innerHTML='<h3>Guided calibration</h3><p class="help">Takes about 10 minutes, one joint at a time. Gripper is skipped (360 servos cannot be calibrated). Turn <b>Live ON</b>, keep Speed low (about 20°/s) and keep a hand near the power switch.</p><button id="wzgo" class="on">Start</button>';
-  $('wzgo').onclick=function(){wz=0;send({type:'unlock',on:true});wzRender();};return;}
- var s=steps[wz],t='<div class="mono">Step '+(wz+1)+' / '+steps.length+'</div>';
- var nav='<div class="row"><button id="wzb">← Back</button><button id="wzn" class="on">Next →</button></div>';
- if(s.k=='start')t+='<h3>1. Link lengths</h3><p class="help">Measure with a ruler, in mm: <b>L0</b> table → shoulder axis · <b>L1</b> shoulder → elbow axis · <b>L2</b> elbow → wrist axis · <b>L3</b> wrist axis → gripper tip.</p><div id="wzlinks"></div><button id="wzlive">Turn Live ON</button>';
- if(s.k=='zero')t+='<h3>'+NAMES[s.j]+': set zero</h3><p class="help">Nudge until <b>'+REF[s.j]+'</b>, then press Set zero. <b>+</b> moves the joint in its positive direction ('+DIR[s.j]+'), and Flip reverses that.</p>'+
-  '<div class="row"><button data-d="-5">−5°</button><button data-d="-1">−1°</button><button data-d="1">+1°</button><button data-d="5">+5°</button><span class="mono" id="wzang" style="width:auto"></span></div>'+
-  '<div class="row"><button id="wzzero" class="on">Set zero here</button><span class="mono" id="wzinfo" style="width:auto"></span></div>';
- if(s.k=='dir')t+='<h3>'+NAMES[s.j]+': check direction</h3><p class="help">Press <b>Go to +10°</b> (it moves from zero). The joint should <b>'+DIR[s.j]+'</b>. If it goes the other way, press Flip, then press Go to +10° again.</p>'+
-  '<div class="row"><button data-jp="10">Go to +10°</button><button data-jp="0">Back to 0°</button><button id="wzok">✔ Correct</button><button id="wzflip">✘ Wrong way: Flip</button></div><div class="mono"><span id="wzang"></span> &nbsp; <span id="wzinfo"></span></div>';
- if(s.k=='lim')t+='<h3>'+NAMES[s.j]+': find limits</h3><p class="help"><b>Hold</b> a button: the joint creeps slowly toward that end. <b>Let go about 1 cm before anything touches</b> or the moment a cable pulls tight. It backs off 8° by itself and saves the limit. Repeat to redo.</p>'+
-  '<div class="row"><button id="wzmin" style="padding:16px 22px">Hold: find MIN</button><button id="wzmax" style="padding:16px 22px">Hold: find MAX</button><button id="wzmid">Centre (90°)</button></div><div class="mono" id="wzinfo"></div>';
- if(s.k=='done')t+='<h3>Done</h3><p class="help">Limits are now enforced everywhere, including in the firmware. Press Finish, then test with the handle on the Move tab.</p><button id="wzfin" class="on">Finish</button>';
- box.innerHTML=t+nav;
- if(s.k=='start'){$('wzlinks').appendChild(linksNode);$('wzlive').onclick=function(){send({type:'live',on:true});};}
- each(box.querySelectorAll('button[data-d]'),function(b){b.onclick=function(){send({type:'nudge',servo:s.j,delta:+b.getAttribute('data-d'),joint:s.j<4});};});
- each(box.querySelectorAll('button[data-jp]'),function(b){b.onclick=function(){send({type:'jointpos',joint:s.j,angle:+b.getAttribute('data-jp')});};});
- if(s.k=='zero'){$('wzzero').onclick=function(){send({type:'setzero',joint:s.j});};}
- if(s.k=='dir'){$('wzok').onclick=function(){wz++;wzRender();};$('wzflip').onclick=function(){send({type:'flip',joint:s.j});$('wzinfo').textContent='Flipped. Press Back to 0°, then Go to +10° again: it should now move the other way.';};}
- if(s.k=='lim'){holdBtn($('wzmin'),s.j,-1);holdBtn($('wzmax'),s.j,1);$('wzmid').onclick=function(){send({type:'raw',servo:s.j,angle:90});};}
- if(s.k=='done'){$('wzfin').onclick=function(){send({type:'unlock',on:false});wz=-1;wzRender();document.querySelector('.tab[data-tab=move]').click();};$('wzb').onclick=function(){if(wz>0){wz--;wzRender();}else{send({type:'unlock',on:false});wz=-1;wzRender();}};}
- var n=$('wzn');if(s.k=='done')n.style.display='none';else n.onclick=function(){wz++;wzRender();};
- wzInfo();
+ var k=wz<0?'intro':steps[wz].k,s=wz<0?{}:steps[wz],N=NAMES[s.j],t,i,sec,pri='';
+ if(k=='intro'){t='Guided calibration';i='Takes about 10 minutes, one joint at a time. Turn <b>LIVE on</b>, keep speed low (<b>20°/s</b>) and keep a hand near the power switch.';sec='The gripper is skipped: a 360° servo cannot be calibrated.';pri='Start';}
+ else if(k=='start'){t='Link lengths';i='Measure with a ruler, in mm: <b>L0</b> table '+RARR+' shoulder axis · <b>L1</b> shoulder '+RARR+' elbow · <b>L2</b> elbow '+RARR+' wrist · <b>L3</b> wrist '+RARR+' gripper tip.';sec='Tap a value to change it.';pri='Turn LIVE on';}
+ else if(k=='zero'){t=N+' — set zero';i='Nudge until <b>'+REF[s.j]+'</b>, then press Set zero.';sec='+ moves the joint in its positive direction ('+DIR[s.j].toLowerCase()+'). The next step checks it.';pri='Set zero here';}
+ else if(k=='dir'){t=N+' — check direction';i='Press <b>Go to +10°</b> (it moves from zero). The joint should <b>'+DIR[s.j].toLowerCase()+'</b>.';sec='If it goes the other way press WRONG WAY: FLIP, then GO TO +10° again.';pri='Correct';}
+ else if(k=='lim'){t=N+' — find limits';i='<b>Hold</b> a button: the joint creeps toward that end. <b>Let go about 1 cm before anything touches</b> or a cable pulls tight.';sec='It backs off 8° by itself and saves the limit. Repeat to redo.';}
+ else {t='Done';i='Limits are now enforced everywhere, including in the firmware.';sec='Press FINISH, then test with the handles on the Move tab.';pri='Finish';}
+ txt($('wzt'),t);$('wzi').innerHTML=i;txt($('wzs'),sec);tog($('wzs'),'am',false);
+ txt($('wzstep'),wz<0?'NOT STARTED':'STEP '+(wz+1)+' / '+steps.length);
+ each($('wzpg').childNodes,function(p,n){tog(p,'on',n<=wz);});
+ show($('wzro'),k=='zero'||k=='dir'||k=='lim');txt($('wzang'),'–');
+ show($('wzZero'),k=='zero');show($('wzDir'),k=='dir');show($('wzLim'),k=='lim');show($('wzLinks'),k=='start');
+ show($('wzb'),wz>=0);show($('wzn'),wz>=0&&k!='done');show($('wzp'),!!pri);txt($('wzp'),pri);
+ $('wzp').style.right=(wz>=0&&k!='done'?148:28)+'px';
+ each(GROUPS,function(g,n){var el=$('wr'+n),cur=wz>=g.s&&wz<=g.e,done=wz>g.e;
+  cls(el,'cr'+(cur?' cur':done?' done':''));
+  txt(el.lastChild,g.sub||(cur?KIND[steps[wz].k]:done?'3/3':'0/3'));});
+ wzInfo();stDirty=true;schedule();
 }
+$('wzb').textContent=LARR+' Back';$('wzn').textContent='Next '+RARR;
+each($('wzZero').childNodes,function(b){b.textContent=sgn(b.textContent);});
 wzRender();
 // after cam_panel.js (injected after this script) has added its listener, so it sees the initial cfg and log replay
 document.addEventListener('DOMContentLoaded',connect);
