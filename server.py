@@ -572,6 +572,7 @@ async def handle(ws, m):
 
     # ---------- camera / vision / pick ----------
     elif t == "stop": do_stop()
+    elif t == "client": log("client: " + str(m.get("info", ""))[:300])
     elif t == "jog":
         tip = tool_state()
         move_tip(tip["x"] + float(m.get("dx", 0)), tip["y"] + float(m.get("dy", 0)), tip["z"] + float(m.get("dz", 0)),

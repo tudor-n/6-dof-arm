@@ -121,14 +121,14 @@ body{position:fixed;left:0;top:0;right:0;bottom:0;color:#fff;font:400 15px/1.4 R
   <div id="rollv" class="x m" style="left:0;top:442px;width:83px;text-align:center;font-size:16px;line-height:16px">–</div>
  </div>
  <div class="x" style="left:84px;top:0;width:544px;height:472px">
-  <canvas id="side" class="x" width="544" height="448" style="left:0;top:24px;width:544px;height:448px"></canvas>
+  <svg id="side" class="x" width="544" height="448" viewBox="0 0 560 460" preserveAspectRatio="xMinYMin meet" style="left:0;top:24px"></svg>
   <div class="x" style="left:16px;top:14px;white-space:nowrap"><span class="lb">Side</span><span id="sideHint" class="hn" style="margin-left:10px"></span></div>
   <div id="rd" class="x m" style="right:16px;top:12px;font-size:12px;line-height:12px;color:#8a8a8a;white-space:nowrap"><span>X <b id="rx">–</b></span><span>Y <b id="ry">–</b></span><span>Z <b id="rz">–</b></span><span>P <b id="rp">–</b></span></div>
   <div id="limp" class="x" style="display:none"><div id="limpT" class="lb">Servos limp</div><p>Nothing moves until LIVE is on. Keep a hand near the power switch.</p></div>
  </div>
  <div class="x bl" style="left:628px;top:0;width:300px;height:472px">
   <div class="x" style="left:16px;top:14px;white-space:nowrap"><span class="lb">Top</span><span class="hn" style="margin-left:10px">drag the dial · base only</span></div>
-  <canvas id="top" class="x" width="299" height="328" style="left:0;top:56px;width:299px;height:328px"></canvas>
+  <svg id="top" class="x" width="299" height="328" viewBox="0 0 420 460" preserveAspectRatio="xMinYMin meet" style="left:0;top:56px"></svg>
   <div class="x" style="left:0;top:415px;width:299px;height:57px;border-top:1px solid #1a1a1a">
    <div class="x lb" style="left:16px;top:26px">Base</div>
    <div id="basev" class="x m" style="right:16px;top:12px;font-size:28px;line-height:28px">–</div>
@@ -464,8 +464,12 @@ window.ARM={send:send,listen:function(fn){listeners.push(fn);},onRender:function
  addView:function(name,el){VIEWS[name]=el;},onTab:function(fn){tabFns.push(fn);},tab:function(){return TAB;},setTab:setTab,
  setKeys:function(fn){KEYH=fn;},openSetup:null};
 
+var infoSent=false;
 listeners.push(function(m){
- if(m.type=='cfg'){cfg=m.cfg;drawKey=null;drawStatic();buildCal();setRanges();}
+ // once per page load, tell the server log how this client sized the frame (which browser, viewport, fit mode)
+ if(!infoSent){infoSent=true;setTimeout(function(){send({type:'client',info:window.innerWidth+'x'+window.innerHeight+' '+($('app').style.transform?'scaled':'native')+
+  ' dpr='+(window.devicePixelRatio||1)+(LEGACY?' legacy':'')+' | '+navigator.userAgent});},1500);}
+ if(m.type=='cfg'){cfg=m.cfg;drawKey=null;buildCal();setRanges();}
  else if(m.type=='state'){st=m;stDirty=true;}
  else return;
  schedule();
@@ -530,31 +534,54 @@ var lastSend=0,pending={},timer=null;
 function flush(){if(timer){clearTimeout(timer);timer=null;}var any=false;for(var k in pending){send(pending[k]);any=true;}pending={};if(any)lastSend=now();}
 function sendDrag(src,m){pending[src]=m;var d=now()-lastSend;if(d>=40)flush();else if(!timer)timer=setTimeout(flush,40-d);}
 
-// ---- drawing: canvases at 1x; the static layer is drawn once offscreen and blitted each frame ----
-var side=$('side'),topv=$('top'),sc=side.getContext('2d'),tc=topv.getContext('2d');
-var SK=side.width/560, TK=topv.width/420;   // logical 560x460 / 420x460 views fitted to the panels
-var sideBg=document.createElement('canvas'),topBg=document.createElement('canvas');
-sideBg.width=side.width;sideBg.height=side.height;topBg.width=topv.width;topBg.height=topv.height;
+// ---- drawing: the two arm views are SVG, built once; a frame only moves the existing shapes ----
+// Not canvas: in Fully's KitKat WebView (Chromium 33) a GPU canvas repainted while a finger is dragging flashes
+// the screen white. SVG is painted like the rest of the page, which does not flash. The viewBox is the old
+// logical 560x460 / 420x460 space, scaled into the panel from the top-left (xMinYMin meet), as the canvas was.
+var side=$('side'),topv=$('top');side._w=544;side._h=448;topv._w=299;topv._h=328;
+var SK=544/560, TK=299/420;
 var SS=0.9, SO={x:170,y:430}, TS=0.95, TO={x:210,y:420};
 function sp(r,z){return [SO.x+r*SS,SO.y-z*SS];}
 function tp(x,y){return [TO.x-y*TS,TO.y-x*TS];}
-function setDash(c,d){if(c.setLineDash)c.setLineDash(d);else if('webkitLineDash' in c)c.webkitLineDash=d;}
-function line(c,pts,color,w,dash){c.strokeStyle=color;c.lineWidth=w;setDash(c,dash||[]);c.lineCap='round';c.lineJoin='round';c.beginPath();for(var i=0;i<pts.length;i++){if(i)c.lineTo(pts[i][0],pts[i][1]);else c.moveTo(pts[i][0],pts[i][1]);}c.stroke();if(dash)setDash(c,[]);}
-function dot(c,p,r,fill,stroke,w){c.beginPath();c.arc(p[0],p[1],r,0,7);c.fillStyle=fill;c.fill();if(stroke){c.strokeStyle=stroke;c.lineWidth=w||2;c.stroke();}}
-function ring(c,p,r,dash,color,w){c.beginPath();c.arc(p[0],p[1],r,0,Math.PI*2);c.strokeStyle=color;c.lineWidth=w;setDash(c,dash);c.stroke();setDash(c,[]);}
-function diamond(c,p,r,fill,stroke){c.beginPath();c.moveTo(p[0],p[1]-r);c.lineTo(p[0]+r,p[1]);c.lineTo(p[0],p[1]+r);c.lineTo(p[0]-r,p[1]);c.closePath();c.fillStyle=fill;c.fill();c.strokeStyle=stroke;c.lineWidth=2;c.stroke();}
+var SVGNS='http://www.w3.org/2000/svg';
+function sv(parent,tag,a){var e=document.createElementNS(SVGNS,tag);for(var k in a)e.setAttribute(k,a[k]);parent.appendChild(e);return e;}
+// attribute write only when the value really changes (like txt/cls for the DOM)
+function at(e,k,v){v=typeof v=='number'?v.toFixed(1):String(v);var c=e._a||(e._a={});if(c[k]!==v){c[k]=v;e.setAttribute(k,v);}}
+function ptsAttr(a){var s='';for(var i=0;i<a.length;i++)s+=(i?' ':'')+a[i][0].toFixed(1)+','+a[i][1].toFixed(1);return s;}
+function mv(e,p){at(e,'cx',p[0]);at(e,'cy',p[1]);}
+var RND={'stroke-linecap':'round','stroke-linejoin':'round',fill:'none'};
+function lineA(color,w,dash){var a={stroke:color,'stroke-width':w};for(var k in RND)a[k]=RND[k];if(dash)a['stroke-dasharray']=dash;return a;}
+// side view, back to front: ground, reach ring, base block, target ghost, arm, joint dots, handles (live only)
+var SV={};
+sv(side,'line',{x1:0,y1:SO.y,x2:560,y2:SO.y,stroke:'#333','stroke-width':2});
+SV.reach=sv(side,'circle',{fill:'none',stroke:'#242424','stroke-width':1.5,'stroke-dasharray':'4 6',r:0});
+sv(side,'rect',{x:SO.x-22,y:SO.y-14,width:44,height:14,fill:'#141414',stroke:'#3a3a3a','stroke-width':1});
+SV.live=sv(side,'g',{visibility:'hidden'});
+SV.tgt=sv(SV.live,'polyline',lineA('#555',3,'6 6'));
+SV.cur=sv(side,'polyline',lineA('#3a3a3a',8));
+SV.j=[];for(var i=0;i<3;i++)SV.j.push(sv(side,'circle',{r:5,fill:'#000'}));
+SV.hs=sv(side,'g',{visibility:'hidden'});
+SV.tip=sv(SV.hs,'circle',{r:20,fill:'#fff','fill-opacity':.18,stroke:'#fff','stroke-width':2.5});
+SV.tipc=sv(SV.hs,'circle',{r:4,fill:'#fff'});
+SV.dir=sv(SV.hs,'polygon',{fill:'#ffb020','fill-opacity':.3,stroke:'#ffb020','stroke-width':2});
+SV.wrist=sv(SV.hs,'circle',{r:14,fill:'#fff','fill-opacity':.1,stroke:'#fff','stroke-width':2});
+SV.elbow=sv(SV.hs,'circle',{r:14,fill:'#fff','fill-opacity':.1,stroke:'#fff','stroke-width':2});
+// top view: reach ring, forward line, dial ring, base block, target ghost, arm, then (live only) joint dots + dial handle
+var TV={};
+TV.reach=sv(topv,'circle',{cx:TO.x,cy:TO.y,fill:'none',stroke:'#1f1f1f','stroke-width':1.5,'stroke-dasharray':'4 6',r:0});
+sv(topv,'line',{x1:TO.x,y1:TO.y,x2:TO.x,y2:40,stroke:'#1f1f1f','stroke-width':1.5,'stroke-linecap':'round'});
+TV.dial=sv(topv,'circle',{cx:TO.x,cy:TO.y,fill:'none',stroke:'#2a2a2a','stroke-width':2,r:0});
+sv(topv,'rect',{x:TO.x-16,y:TO.y-14,width:32,height:28,fill:'#141414',stroke:'#3a3a3a','stroke-width':1});
+TV.tgt=sv(topv,'polyline',lineA('#555',3,'6 6'));at(TV.tgt,'visibility','hidden');
+TV.cur=sv(topv,'polyline',lineA('#3a3a3a',8));
+TV.live=sv(topv,'g',{visibility:'hidden'});
+TV.j=[];for(i=0;i<2;i++)TV.j.push(sv(TV.live,'circle',{r:5,fill:'#000'}));
+TV.h=sv(TV.live,'circle',{r:20,fill:'#fff','fill-opacity':.18,stroke:'#fff','stroke-width':2.5});
+TV.hc=sv(TV.live,'circle',{r:4,fill:'#fff'});
 function drawStatic(){
- var L=cfg.links,R=L.L1+L.L2,c=sideBg.getContext('2d');
- c.setTransform(1,0,0,1,0,0);c.fillStyle='#000';c.fillRect(0,0,sideBg.width,sideBg.height);c.setTransform(SK,0,0,SK,0,0);
- line(c,[[0,SO.y],[560,SO.y]],'#333',2);
- ring(c,sp(0,L.L0),R*SS,[4,6],'#242424',1.5);
- c.fillStyle='#141414';c.fillRect(SO.x-22,SO.y-14,44,14);c.strokeStyle='#3a3a3a';c.lineWidth=1;c.strokeRect(SO.x-22,SO.y-14,44,14);
- c=topBg.getContext('2d');
- c.setTransform(1,0,0,1,0,0);c.fillStyle='#000';c.fillRect(0,0,topBg.width,topBg.height);c.setTransform(TK,0,0,TK,0,0);
- ring(c,[TO.x,TO.y],(R+L.L3)*TS,[4,6],'#1f1f1f',1.5);
- line(c,[[TO.x,TO.y],[TO.x,40]],'#1f1f1f',1.5);
- ring(c,[TO.x,TO.y],TR,[],'#2a2a2a',2);
- c.fillStyle='#141414';c.fillRect(TO.x-16,TO.y-14,32,28);c.strokeStyle='#3a3a3a';c.lineWidth=1;c.strokeRect(TO.x-16,TO.y-14,32,28);
+ var L=cfg.links,R=L.L1+L.L2;
+ mv(SV.reach,sp(0,L.L0));at(SV.reach,'r',R*SS);
+ at(TV.reach,'r',(R+L.L3)*TS);at(TV.dial,'r',TR);
 }
 function sideHandles(){if(!st)return[];var q=st.pl_tgt,P=function(a){return sp(a[0],a[1]);},mid=[(q[3][0]+q[4][0])/2,(q[3][1]+q[4][1])/2];
  return [{n:'tip',px:P(q[4]),rad:20},{n:'dir',px:P(mid),rad:12},{n:'wrist',px:P(q[3]),rad:14},{n:'elbow',px:P(q[2]),rad:14}];}
@@ -562,32 +589,32 @@ var drawKey=null;
 function draw(){
  if(!cfg)return;
  var key=st?st.cur.join()+'|'+st.tgt.join()+'|'+st.live:'-';if(key===drawKey)return;drawKey=key;
- sc.setTransform(1,0,0,1,0,0);sc.drawImage(sideBg,0,0);tc.setTransform(1,0,0,1,0,0);tc.drawImage(topBg,0,0);
+ drawStatic();
  if(!st)return;
- sc.setTransform(SK,0,0,SK,0,0);tc.setTransform(TK,0,0,TK,0,0);
  var i,live=st.live,col=live?'#fff':'#3a3a3a',pc=[],tcur=[];
  for(i=0;i<st.pl_cur.length;i++)pc.push(sp(st.pl_cur[i][0],st.pl_cur[i][1]));
  for(i=0;i<st.pts_cur.length;i++)tcur.push(tp(st.pts_cur[i][0],st.pts_cur[i][1]));
- if(live){
-  var pg=[],tg=[];
-  for(i=0;i<st.pl_tgt.length;i++)pg.push(sp(st.pl_tgt[i][0],st.pl_tgt[i][1]));
-  for(i=0;i<st.pts_tgt.length;i++)tg.push(tp(st.pts_tgt[i][0],st.pts_tgt[i][1]));
-  line(sc,pg,'#555',3,[6,6]);line(tc,tg,'#555',3,[6,6]);
- }
- line(sc,pc,col,8);line(tc,tcur,col,8);
- for(i=1;i<4;i++)dot(sc,pc[i],5,'#000');   // shoulder, elbow, wrist
+ at(SV.cur,'points',ptsAttr(pc));at(SV.cur,'stroke',col);at(TV.cur,'points',ptsAttr(tcur));at(TV.cur,'stroke',col);
+ for(i=1;i<4;i++)mv(SV.j[i-1],pc[i]);   // shoulder, elbow, wrist
+ at(SV.live,'visibility',live?'visible':'hidden');at(SV.hs,'visibility',live?'visible':'hidden');
+ at(TV.tgt,'visibility',live?'visible':'hidden');at(TV.live,'visibility',live?'visible':'hidden');
  if(!live)return;
- for(i=2;i<4;i++)dot(tc,tcur[i],5,'#000');
+ var pg=[],tg=[];
+ for(i=0;i<st.pl_tgt.length;i++)pg.push(sp(st.pl_tgt[i][0],st.pl_tgt[i][1]));
+ for(i=0;i<st.pts_tgt.length;i++)tg.push(tp(st.pts_tgt[i][0],st.pts_tgt[i][1]));
+ at(SV.tgt,'points',ptsAttr(pg));at(TV.tgt,'points',ptsAttr(tg));
+ for(i=2;i<4;i++)mv(TV.j[i-2],tcur[i]);
  each(sideHandles(),function(h){
-  if(h.n=='tip'){dot(sc,h.px,20,'rgba(255,255,255,.18)','#fff',2.5);dot(sc,h.px,4,'#fff');}
-  else if(h.n=='dir')diamond(sc,h.px,12,'rgba(255,176,32,.3)','#ffb020');
-  else dot(sc,h.px,14,'rgba(255,255,255,.1)','#fff',2);
+  var p=h.px;
+  if(h.n=='tip'){mv(SV.tip,p);mv(SV.tipc,p);}
+  else if(h.n=='dir')at(SV.dir,'points',ptsAttr([[p[0],p[1]-12],[p[0]+12,p[1]],[p[0],p[1]+12],[p[0]-12,p[1]]]));
+  else mv(SV[h.n],p);
  });
- var th=topHandle();dot(tc,th,HR,'rgba(255,255,255,.18)','#fff',2.5);dot(tc,th,4,'#fff');
+ var th=topHandle();mv(TV.h,th);mv(TV.hc,th);
 }
 $('sideHint').textContent='drag tip, elbow, wrist · '+(G('◆','')?'◆ aims':'the amber handle aims')+' the gripper';
-// canvas point (logical units) under a mouse event / Touch (page coordinates: old Android WebKit gets clientX wrong)
-function pos(cv,e,k){var b=cv.getBoundingClientRect(),x=e.pageX-(b.left+window.pageXOffset),y=e.pageY-(b.top+window.pageYOffset);return[x*cv.width/b.width/k,y*cv.height/b.height/k];}
+// view point (logical units) under a mouse event / Touch (page coordinates: old Android WebKit gets clientX wrong)
+function pos(cv,e,k){var b=cv.getBoundingClientRect(),x=e.pageX-(b.left+window.pageXOffset),y=e.pageY-(b.top+window.pageYOffset);return[x*cv._w/b.width/k,y*cv._h/b.height/k];}
 var D=180/Math.PI;
 function nrm(a){return ((a+180)%360+360)%360-180;}
 var dragSide=null, dragTop=null;
