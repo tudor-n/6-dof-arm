@@ -730,7 +730,7 @@ async def video(req):
 
 async def frame(req):
     # single JPEG, for browsers that cannot show the multipart MJPEG stream in an <img>
-    # ?w=456&h=342 asks for a downscaled, lower-quality copy (the tablet shows the feed at exactly that size)
+    # ?w=640&h=360 asks for a downscaled, lower-quality copy (the tablet shows the feed at exactly that size)
     if V is None or V.jpg is None: return web.Response(status=503, text="no frame")
     jpg = V.jpg
     try: w, h = int(req.query.get("w", 0)), int(req.query.get("h", 0))

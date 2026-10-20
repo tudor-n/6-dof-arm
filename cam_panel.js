@@ -18,9 +18,9 @@
     '#hstat{left:100px;top:0;width:138px;line-height:26px;font-size:12px;color:#8a8a8a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#hrow.bad #hstat{left:164px;width:74px}',
     '#wbtn{right:92px;top:0;width:118px;height:26px;line-height:24px;border:1px solid #3a3a3a;border-radius:3px;text-align:center;color:#8a8a8a;font-weight:600;font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;white-space:nowrap}',
     '#wbtn.w{border-color:#ffb020;color:#ffb020}#wbtn.prs{background:#262626}',
-    '#vwrap{left:15px;top:47px;width:458px;height:344px;border:1px solid #262626;border-radius:3px;background:#0c0c0c;cursor:crosshair}',
-    '#cvid{position:absolute;left:0;top:0;width:456px;height:342px;display:block}',
-    '.ax{color:#5c5c5c;font-size:13px}.tv{display:inline-block;width:132px}',
+    '#vwrap{left:16px;top:46px;width:642px;height:362px;border:1px solid #262626;border-radius:3px;background:#0c0c0c;cursor:crosshair}',
+    '#cvid{position:absolute;left:0;top:0;width:640px;height:360px;display:block}',
+    '.ax{color:#5c5c5c;font-size:13px}.tv{display:inline-block;width:100px}',
     '.tok{display:inline-block;vertical-align:middle;height:36px;line-height:34px;padding:0 6px 0 12px;margin-right:8px;border:1px solid #fff;border-radius:18px;font-weight:500;font-size:15px;cursor:pointer}',
     '.tok span{display:inline-block;width:24px;text-align:center;color:#8a8a8a;font-size:14px}.tok.prs{background:#fff;color:#000}',
     '.sg{display:inline-block;vertical-align:top;height:42px;line-height:40px;padding:0 18px;margin-right:8px;border:1px solid #3a3a3a;border-radius:21px;font-weight:500;font-size:15px;cursor:pointer}.sg.prs{background:#fff;color:#000;border-color:#fff}',
@@ -39,12 +39,14 @@
   function B(cls, a, l, t, w, label, extra) {
     return '<div class="x b ' + cls + '" data-a="' + a + '" style="left:' + l + 'px;top:' + t + 'px' + (w ? ';width:' + w + 'px;padding:0' : '') + '"' + (extra || '') + '>' + label + '</div>';
   }
-  function jogRows(l, t, w, gap) {
-    var h = '';
+  // rows every rh px (default 52) of bh px tall buttons (default 44, the .jg height)
+  function jogRows(l, t, w, gap, rh, bh) {
+    var h = '', sz = bh ? ';height:' + bh + 'px;line-height:' + (bh - 2) + 'px' : '';
+    rh = rh || 52; bh = bh || 44;
     each(['X', 'Y', 'Z'], function (ax, r) {
-      h += '<div class="x m" style="left:' + l + 'px;top:' + (t + r * 52) + 'px;width:24px;line-height:44px;font-size:13px;font-weight:600">' + ax + '</div>';
+      h += '<div class="x m" style="left:' + l + 'px;top:' + (t + r * rh) + 'px;width:24px;line-height:' + bh + 'px;font-size:13px;font-weight:600">' + ax + '</div>';
       each([-10, -1, 1, 10], function (s, c) {
-        h += '<div class="x b jg" data-a="jog" data-k="d' + ax.toLowerCase() + '" data-s="' + s + '" style="left:' + (l + 30 + c * (w + gap)) + 'px;top:' + (t + r * 52) + 'px;width:' + w + 'px">' + (s > 0 ? '+' + s : MINUS + (-s)) + '</div>';
+        h += '<div class="x b jg" data-a="jog" data-k="d' + ax.toLowerCase() + '" data-s="' + s + '" style="left:' + (l + 30 + c * (w + gap)) + 'px;top:' + (t + r * rh) + 'px;width:' + w + 'px' + sz + '">' + (s > 0 ? '+' + s : MINUS + (-s)) + '</div>';
       });
     });
     return h;
@@ -54,38 +56,45 @@
   var cam = el('<div id="cam" class="v" style="display:none"></div>');
   cam.innerHTML = [
     '<div id="cmain" class="x" style="left:0;top:0;width:1024px;height:472px">',
-    ' <div id="hrow" class="x" style="left:16px;top:12px;width:456px;height:26px">',
+    ' <div id="hrow" class="x" style="left:16px;top:12px;width:642px;height:26px">',
     '  <div class="x pchip"><span class="pd"></span><span id="pchipt">POSE OK</span></div>',
     '  <div id="hstat" class="x m"></div>',
     '  <div id="wbtn" class="x" data-a="logs">LOG</div>',
     '  <div id="clock" class="x tl" data-a="plock" style="right:0;top:-9px;height:44px;line-height:44px">Lock pose</div>',
     ' </div>',
     ' <div id="vwrap" class="x"><img id="cvid" alt=""></div>',
-    ' <div class="x" style="left:16px;top:400px;width:456px;height:44px">',
+    ' <div class="x" style="left:16px;top:418px;width:642px;height:44px">',
     '  <div class="x pl" data-a="vtog" data-s="show_grid" style="left:0;top:0;width:60px">Grid</div>',
     '  <div class="x pl" data-a="vtog" data-s="show_tip" style="left:68px;top:0;width:84px">Arm tip</div>',
     '  <div class="x pl" data-a="vtog" data-s="show_markers" style="left:160px;top:0;width:124px">Marker check</div>',
-    '  <div class="x f" style="right:0;top:6px;width:150px;text-align:right;font-size:12px;line-height:16px">Tap the table to set a target</div>',
+    '  <div class="x f" style="right:0;top:14px;text-align:right;font-size:12px;line-height:16px;white-space:nowrap">Tap the table to set a target</div>',
     ' </div>',
-    ' <div class="x bl" style="left:480px;top:0;width:544px;height:472px">',
-    '  <div class="x bb" style="left:0;top:0;width:543px;height:134px">',
-    '   <div class="x lb" style="left:16px;top:14px">Target</div>',
-    '   <div id="cbusy" class="x lb" style="left:84px;top:14px;color:#30d158;display:none">Pick running · STOP cancels</div>',
-    '   <div class="x tl" data-a="setup" style="right:0;top:0;height:40px;line-height:40px;padding:0 16px" id="setupb">Setup</div>',
-    '   <div id="tvals" class="x m" style="left:16px;top:37px;font-size:20px;line-height:20px;white-space:nowrap;display:none"><span class="tv"><span class="ax">X </span><span id="tx"></span></span><span class="tv"><span class="ax">Y </span><span id="ty"></span></span><span class="tv"><span class="ax">Z </span><span id="tz"></span></span></div>',
-    '   <div id="tnone" class="x f" style="left:16px;top:36px;font-size:15px;line-height:22px">Tap the video to choose a point on the table.</div>',
-    '   ' + B('', 'chov', 16, 69, 150, 'Hover') + B('', 'clow', 174, 69, 150, 'Lower') + B('pr', 'cpick', 332, 69, 195, 'Pick here'),
+    // right column: target + detect, or (behind the Jog tip button) the jog pad; the video keeps its size either way
+    ' <div class="x bl" style="left:674px;top:0;width:350px;height:472px">',
+    '  <div id="ctgt" class="x" style="left:0;top:0;width:349px;height:472px">',
+    '   <div class="x bb" style="left:0;top:0;width:349px;height:148px">',
+    '    <div class="x lb" style="left:16px;top:14px">Target</div>',
+    '    <div class="x tl" data-a="setup" style="right:0;top:0;height:40px;line-height:40px;padding:0 16px" id="setupb">Setup</div>',
+    '    <div id="tvals" class="x m" style="left:16px;top:38px;font-size:18px;line-height:18px;white-space:nowrap;display:none"><span class="tv"><span class="ax">X </span><span id="tx"></span></span><span class="tv"><span class="ax">Y </span><span id="ty"></span></span><span class="tv"><span class="ax">Z </span><span id="tz"></span></span></div>',
+    '    <div id="tnone" class="x f" style="left:16px;top:36px;font-size:15px;line-height:22px;white-space:nowrap">Tap the video to choose a table point.</div>',
+    '    ' + B('', 'chov', 16, 69, 96, 'Hover') + B('', 'clow', 120, 69, 96, 'Lower') + B('pr', 'cpick', 224, 69, 110, 'Pick here'),
+    '    <div id="cbusy" class="x lb" style="left:16px;top:127px;color:#30d158;display:none">Pick running · STOP cancels</div>',
+    '   </div>',
+    '   <div class="x bb" style="left:0;top:148px;width:349px;height:141px">',
+    '    <div class="x lb" style="left:16px;top:14px">Detect</div>',
+    '    <div id="cdet" class="x" data-a="det" style="right:0;top:0;width:110px;height:48px;cursor:pointer"><span class="sw s2" style="right:16px;top:8px"><i></i></span></div>',
+    '    <div id="cprompt" class="x fld" data-a="kbopen" style="left:16px;top:52px;width:240px;font-size:14px"></div>',
+    '    ' + B('pr', 'pickd', 264, 52, 70, 'Pick'),
+    '    <div id="cdets" class="x m d" style="left:16px;top:112px;width:318px;font-size:12px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>',
+    '   </div>',
+    '   ' + B('', 'jogo', 16, 305, 318, 'Jog tip ' + A.RARR),
     '  </div>',
-    '  <div class="x bb" style="left:0;top:134px;width:543px;height:141px">',
-    '   <div class="x lb" style="left:16px;top:14px">Detect</div>',
-    '   <div id="cdet" class="x" data-a="det" style="right:0;top:0;width:110px;height:48px;cursor:pointer"><span class="sw s2" style="right:16px;top:8px"><i></i></span></div>',
-    '   <div id="cprompt" class="x fld" data-a="kbopen" style="left:16px;top:52px;width:433px;font-size:14px"></div>',
-    '   ' + B('pr', 'pickd', 457, 52, 70, 'Pick'),
-    '   <div id="cdets" class="x m d" style="left:16px;top:112px;width:511px;font-size:12px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>',
-    '  </div>',
-    '  <div class="x" style="left:0;top:275px;width:543px;height:197px">',
-    '   <div class="x lb" style="left:16px;top:10px">Jog tip · mm</div><div class="x f" style="right:16px;top:10px;font-size:11px;line-height:11px">+X fwd · +Y left · +Z up</div>',
-    '   ' + jogRows(16, 29, 115, 6),
+    '  <div id="cjog" class="x" style="left:0;top:0;width:349px;height:472px;display:none">',
+    '   <div class="x lb" style="left:16px;top:14px">Jog tip · mm</div>',
+    '   <div id="cjtip" class="x m" style="left:16px;top:38px;font-size:14px;line-height:16px;white-space:nowrap"></div>',
+    '   <div class="x f" style="left:16px;top:62px;font-size:11px;line-height:11px">+X fwd · +Y left · +Z up</div>',
+    '   ' + jogRows(16, 88, 67, 6, 76, 64),
+    '   ' + B('', 'jogx', 16, 414, 318, A.LARR + ' Target & detect'),
     '  </div>',
     ' </div>',
     '</div>',
@@ -174,15 +183,17 @@
 
   // ---------------- video ----------------
   // Old browsers cannot show the multipart MJPEG stream in an <img>, so there the image reloads
-  // /frame.jpg (downscaled to exactly the 456x342 box by the server) once the previous frame has arrived.
+  // /frame.jpg (downscaled by the server to exactly the size the image is shown at) once the previous frame has arrived.
   var vid = $('cvid'), vidOn = false, snapT = null, sub = null, KB = { open: false, tokens: [], cur: '', dirty: false }, logOpen = false;
-  // the box is 456 wide; its height follows the camera's aspect (342 for 4:3), letterboxed in the 342 px slot
-  var vidH = 342;
+  // the slot is 640x360; the image keeps the camera's aspect and is centred in it (16:9 fills it, 4:3 is 480x360)
+  var vidW = 640, vidH = 360;
   function fitVid(res) {
-    var h = res && res[0] ? Math.min(342, Math.round(456 * res[1] / res[0])) : 342;
-    if (h === vidH) return; vidH = h; vid.style.height = h + 'px'; vid.style.top = ((342 - h) >> 1) + 'px';
+    var w = 640, h = 360;
+    if (res && res[0] && res[1]) { if (res[1] * 640 > res[0] * 360) w = Math.round(360 * res[0] / res[1]); else h = Math.round(640 * res[1] / res[0]); }
+    if (w === vidW && h === vidH) return; vidW = w; vidH = h;
+    vid.style.width = w + 'px'; vid.style.height = h + 'px'; vid.style.left = ((640 - w) >> 1) + 'px'; vid.style.top = ((360 - h) >> 1) + 'px';
   }
-  function snap() { snapT = null; if (vidOn) vid.src = '/frame.jpg?w=456&h=' + vidH + '&t=' + Date.now(); }
+  function snap() { snapT = null; if (vidOn) vid.src = '/frame.jpg?w=' + vidW + '&h=' + vidH + '&t=' + Date.now(); }
   function nextSnap(ms) { if (A.legacy && vidOn && !snapT) snapT = setTimeout(snap, ms); }
   vid.onload = function () { nextSnap(150); };   // leave the tablet time to decode
   vid.onerror = function () { nextSnap(500); };
@@ -229,6 +240,10 @@
   act('cpick', { tap: function () { send({ type: 'pick_click' }); } });
   act('pickd', { tap: function () { send({ type: 'pick_detected' }); } });
   act('det', { tap: function () { send({ type: 'detect', on: !(V && V.detect), prompt: promptText() }); } });
+  var jogOpen = false;
+  function setJog(on) { jogOpen = on; show($('ctgt'), !on); show($('cjog'), on); sDirty = vDirty = true; A.schedule(); }
+  act('jogo', { tap: function () { setJog(true); } });
+  act('jogx', { tap: function () { setJog(false); } });
   act('jog', { tap: function (el) { var m = { type: 'jog' }; m[el.getAttribute('data-k')] = +el.getAttribute('data-s'); send(m); } });
   act('mrec', { tap: function (el) { send({ type: 'marker_record', id: +el.getAttribute('data-m') }); } });
   act('mapply', { tap: function () { send({ type: 'marker_apply' }); } });
@@ -355,6 +370,7 @@
         var p = pin[a[0]] != null; A.fieldShow(a[0], f1(p ? pin[a[0]] : a[1])); tog($('F' + a[0]), 'pin', p);
       });
     }
+    if (!sub && jogOpen) txt($('cjtip'), 'X ' + f1(t.x) + '   Y ' + f1(t.y) + '   Z ' + f1(t.z));
     if (sub == 'roll' && croll.drag == null) { croll.set(Math.round(t.roll)); txt($('crollv'), f0(t.roll)); }
   }
   function warnings() {
@@ -396,6 +412,7 @@
     if (c) { txt($('tx'), f1(c.x)); txt($('ty'), f1(c.y)); txt($('tz'), f1(c.z)); }
     each(['chov', 'clow', 'cpick'], function (a) { tog(cam.querySelector('[data-a=' + a + ']'), 'dis', !c); });
     tog($('cdet'), 'on', V.detect);
+    tog(cam.querySelector('[data-a=pickd]'), 'dis', !(V.detect && V.dets.length));
     var p = promptText(); txt($('cprompt'), p || 'tap to type objects…'); tog($('cprompt'), 'f', !p);
     var d = V.dets[0];
     txt($('cdets'), d ? d.name + ' ' + d.conf.toFixed(2) + ' · X ' + f0(d.x) + ' Y ' + f0(d.y) + (d.closing != null ? ' · jaws ' + f0(d.closing) + '°' : '') + (V.dets.length > 1 ? '   (+' + (V.dets.length - 1) + ' more)' : '')

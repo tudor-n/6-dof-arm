@@ -38,13 +38,15 @@ body{position:fixed;left:0;top:0;right:0;bottom:0;color:#fff;font:400 15px/1.4 R
 /* a value you tap to edit with the in-page keypad (never an <input>: Android's keyboard must not appear) */
 .fld{height:48px;line-height:46px;padding:0 12px;border:1px solid #3a3a3a;border-radius:3px;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
 .fld.prs,.fld.ed{border-color:#fff}.fld.pin{color:#ffb020}
-/* switches: only the knob moves (composited -webkit-transform) */
+/* NO 3D transforms anywhere: on the 4.2 browser a translate3d layer inside the scaled #app makes the whole
+   frame a composited layer, and repainting it during a drag flashes the screen white. Knobs and thumbs move by left/top. */
+/* switches: only the knob moves */
 .sw{position:absolute;width:56px;height:30px;border-radius:15px;background:#262626;border:1px solid #3a3a3a}
-.sw i{position:absolute;left:2px;top:2px;width:24px;height:24px;border-radius:12px;background:#fff;-webkit-transition:-webkit-transform .12s;transition:transform .12s}
-.on>.sw{background:#30d158;border-color:#30d158}.on>.sw i{background:#000;-webkit-transform:translate3d(26px,0,0);transform:translate3d(26px,0,0)}
+.sw i{position:absolute;left:2px;top:2px;width:24px;height:24px;border-radius:12px;background:#fff}
+.on>.sw{background:#30d158;border-color:#30d158}.on>.sw i{background:#000;left:28px}
 .sw.s2{width:48px;height:26px;border-radius:13px}.sw.s2 i{width:20px;height:20px;border-radius:10px}
-.on>.sw.s2{background:#fff;border-color:#fff}.on>.sw.s2 i{-webkit-transform:translate3d(22px,0,0);transform:translate3d(22px,0,0)}
-/* custom sliders: a rail (the hit area), a track and a thumb moved with translate3d */
+.on>.sw.s2{background:#fff;border-color:#fff}.on>.sw.s2 i{left:24px}
+/* custom sliders: a rail (the hit area), a track and a thumb moved by its left/top */
 .sl{cursor:pointer}.sl .tk{position:absolute;background:#3a3a3a}
 .sl .th{position:absolute;left:0;top:0;background:#fff;border-radius:3px}.sl .th i{position:absolute;background:#000}
 /* top bar */
@@ -385,7 +387,7 @@ act('tab',{tap:function(el){setTab(el.getAttribute('data-t'));}});
 function Slider(rail,o){
  var th=rail.querySelector('.th'),travel=o.size-o.thumb,S={v:null,drag:null,min:o.min,max:o.max};
  function place(v){var t=(v-S.min)/(S.max-S.min);t=t<0?0:t>1?1:t;var px=Math.round(o.vertical?(1-t)*travel:t*travel);
-  tf(th,o.vertical?'translate3d(0,'+px+'px,0)':'translate3d('+px+'px,0,0)');}
+  if(th._px!==px){th._px=px;th.style[o.vertical?'top':'left']=px+'px';}}
  S.set=function(v){if(S.drag!=null||v==null||v===S.v)return;S.v=v;place(v);};
  S.range=function(a,b){S.min=a;S.max=b;if(S.v!=null)place(S.v);};
  var box=null;
@@ -508,7 +510,7 @@ act('home',{tap:function(){send({type:'home'});}});
 act('rest',{tap:function(){send({type:'rest'});}});
 act('wake',{tap:function(){send({type:'relax',mask:0});}});
 act('rlx5',{tap:function(){send({type:'relax',mask:32});}});
-act('rlxa',{tap:function(el){twice(el,function(){send({type:'relax',mask:63});});}});
+act('rlxa',{tap:function(){send({type:'relax',mask:63});}});
 act('spd',{down:function(el){var v=+el.getAttribute('data-v');spLocal=v;send({type:'speed',dps:v});stDirty=true;schedule();}});
 
 // ---- gripper: two hold-to-move buttons; ANY release, cancel or slide-off brakes (dead-man) ----

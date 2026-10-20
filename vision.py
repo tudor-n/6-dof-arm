@@ -689,6 +689,8 @@ class Vision:
         model, applied = None, None
         while self.running:
             if not self.detect_on or self.rvec is None or self.frame is None:
+                # stale detections would stay drawn on the stream and stay pickable after Detect is switched off
+                if self.dets or self.track: self.dets = []; self.track.clear()
                 time.sleep(0.1); continue
             try:
                 if model is None:
@@ -709,6 +711,7 @@ class Vision:
                                      "closing": ax[0] if ax else None, "line": ax[1] if ax else None,
                                      "name": str(r.names.get(int(b.cls[0]), "?"))})
                 dets.sort(key=lambda d: -d["conf"])
+                if not self.detect_on: continue   # switched off during inference: drop the result
                 if dets:
                     best = dets[0]
                     if self.track and math.hypot(best["x"] - self.track[-1][0], best["y"] - self.track[-1][1]) > 20: self.track.clear()
@@ -722,7 +725,7 @@ class Vision:
 
     def best_target(self):
         """Most confident detection, position = median of the last few frames (less jitter)."""
-        if not self.dets or not self.track: return None
+        if not self.detect_on or not self.dets or not self.track: return None
         d = self.dets[0]
         return {"x": float(np.median([p[0] for p in self.track])), "y": float(np.median([p[1] for p in self.track])),
                 "closing": d["closing"], "name": d["name"], "conf": d["conf"]}
