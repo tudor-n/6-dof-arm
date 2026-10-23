@@ -363,6 +363,85 @@ def test_joint_angles_still_reports_four_arm_joints():
     assert len(S.joint_angles([90.0] * 6, cfg)) == 4
 
 
+# ------------------------------------------------------------ finger follow: reach clamp
+
+def exact_at(x, y, z, pitch, cfg, roll=90.0):
+    """Can the tool hit (x, y, z) exactly at this pitch? The same test the follow loop needs."""
+    servo, reach, lim = S.ik(x, y, z, pitch, cfg, roll)
+    if reach or lim:
+        return False
+    return math.dist(S.fk(list(servo) + [roll, 90.0], cfg)[0][-1], (x, y, z)) <= 2.0
+
+
+def polar(r, az_deg):
+    return r * math.cos(math.radians(az_deg)), r * math.sin(math.radians(az_deg))
+
+
+def test_reachable_target_leaves_a_reachable_point_alone():
+    cfg = S.load_cfg()
+    for x, y, z, pitch in TARGETS:
+        assert S.reachable_target(x, y, z, pitch, cfg, 90.0) == (x, y, z, False)
+
+
+def test_reachable_target_clamps_an_over_reach_onto_the_boundary():
+    """Pointing past the edge must stop AT the edge, on the same azimuth and height."""
+    cfg = S.load_cfg()
+    for x, y, z, pitch in TARGETS:
+        r0, az = math.hypot(x, y), math.degrees(math.atan2(y, x))
+        got = S.reachable_target(*polar(2 * r0, az), z, pitch, cfg, 90.0)
+        assert got is not None and got[3], f"{(x, y, z, pitch)} doubled should be clamped, got {got}"
+        gx, gy, gz, _ = got
+        r = math.hypot(gx, gy)
+        assert abs(math.degrees(math.atan2(gy, gx)) - az) < 1e-6 and gz == z
+        assert r0 - 0.5 <= r < 2 * r0, f"r {r:.1f} for a reachable r {r0:.1f}"
+        assert exact_at(gx, gy, gz, pitch, cfg), "the clamped point itself is not reachable"
+        assert not exact_at(*polar(r + 1.0, az), z, pitch, cfg), f"r {r:.1f} is not the boundary"
+
+
+def test_reachable_target_clamps_the_azimuth_to_the_base_limits():
+    cfg = S.load_cfg()
+    lo, hi = S.joint_ranges(cfg)[0]
+    x, y, z, pitch = TARGETS[0]
+    r0 = math.hypot(x, y)
+    for want, edge in ((hi + 15.0, hi), (lo - 15.0, lo)):
+        got = S.reachable_target(*polar(r0, want), z, pitch, cfg, 90.0)
+        assert got is not None and got[3]
+        assert abs(math.degrees(math.atan2(got[1], got[0])) - edge) < 0.01, f"azimuth {want:.0f} -> {got}"
+        assert abs(math.hypot(got[0], got[1]) - r0) < 0.5, "a reachable radius should survive the azimuth clamp"
+
+
+def test_reachable_target_pushes_a_too_close_point_outward():
+    cfg = S.load_cfg()
+    x, y, z, pitch = TARGETS[0]
+    az = math.degrees(math.atan2(y, x))
+    assert not exact_at(*polar(10.0, az), z, pitch, cfg), "10 mm from the base should be unreachable"
+    got = S.reachable_target(*polar(10.0, az), z, pitch, cfg, 90.0)
+    assert got is not None and got[3]
+    r = math.hypot(got[0], got[1])
+    assert r > 10.0 and exact_at(got[0], got[1], z, pitch, cfg)
+    assert not exact_at(*polar(r - 1.0, az), z, pitch, cfg), f"r {r:.1f} is not the nearest reachable radius"
+
+
+def test_reachable_target_gives_up_on_a_hopeless_height():
+    x, y, _, pitch = TARGETS[0]
+    assert S.reachable_target(x, y, 2000.0, pitch, S.load_cfg(), 90.0) is None
+
+
+def test_finger_raycast_above_the_table():
+    """A fingertip h mm above the table must be cast onto the plane h mm up, not the table:
+    z_off is added to the plane's c, so it is the height above the plane at that XY."""
+    vis, rvec, tvec, _ = synthetic_scene()
+    vis.rvec, vis.tvec = rvec, tvec
+    vis.s["x_trim"] = vis.s["y_trim"] = 0.0
+    for h in (15.0, 60.0):
+        for x, y in [(140.0, 0.0), (220.0, 150.0), (180.0, -200.0)]:
+            u, v = vis.project([[x, y, vis.table_z(x, y) + h]])[0]
+            back = vis.pixel_to_table(u, v, raw=True, z_off=h)
+            assert math.hypot(back[0] - x, back[1] - y) < TOL_MM, f"h {h}: ({x}, {y}) -> {back}"
+            flat = vis.pixel_to_table(u, v, raw=True, z_off=0.0)
+            assert math.hypot(flat[0] - x, flat[1] - y) > 5.0, "ignoring the height should visibly miss"
+
+
 # ------------------------------------------------- tape measurements (non-FK ground truth)
 
 # Tudor's hand measurements, 2026-10-19. The only numbers in this project that do not come

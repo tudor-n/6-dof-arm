@@ -226,6 +226,58 @@ def ik_auto(x, y, z, p0, cfg, roll_servo=None):
     servo, reach, lim = ik(x, y, z, p0, cfg, roll_servo)
     return servo, True, lim
 
+def reachable_target(x, y, z, pitch, cfg, roll_servo=None):
+    """The point nearest (x, y, z) that the tool can hit EXACTLY at this pitch, keeping z, pitch
+    and (where the base allows) the azimuth. Returns (x, y, z, clamped) or None.
+
+    Built for finger follow, which needs "as far as you can along that direction" with the
+    wrist held still. ik_auto is the wrong tool: its pitch sweep and shrink toward the base
+    would make the wrist flail and the height wander as the finger moves.
+
+    Over-reach goes to the farthest exact radius not beyond the target, too close to the
+    base to the nearest one beyond it. The radius is scanned in 5 mm steps before it is
+    bisected, because joint limits can cut the feasible radii into more than one interval,
+    and a plain bisection would silently assume there is only one.
+    """
+    lo, hi = joint_ranges(cfg)[0]
+    x = max(0.0, x)                          # never behind the base, as move_tip
+    r0 = math.hypot(x, y)
+    az = math.atan2(y, x) if r0 > 1e-6 else 0.0
+    azc = math.radians(clamp(math.degrees(az), max(lo, -90.0), min(hi, 90.0)))
+    roll = cfg["joints"][4]["zero"] if roll_servo is None else roll_servo   # ik's None is roll zero
+    c, s = math.cos(azc), math.sin(azc)
+    def exact(r):
+        px, py = r * c, r * s
+        servo, reach, lim = ik(px, py, z, pitch, cfg, roll_servo)
+        if reach or lim: return False
+        return math.dist(fk(list(servo) + [roll, 90.0], cfg)[0][-1], (px, py, z)) <= 2.0
+    if abs(azc - az) < 1e-9 and exact(r0): return x, y, z, False
+    L = cfg["links"]; T = cfg.get("tool") or DEFAULT_TOOL
+    rmax = L["L1"] + L["L2"] + L["L3"] + abs(T.get("along", 0.0)) + abs(T.get("perp", 0.0)) + 5.0
+    def edge(good, bad):                     # bisect the boundary to ~0.3 mm, ending on the good side
+        while abs(bad - good) > 0.3:
+            mid = 0.5 * (good + bad)
+            if exact(mid): good = mid
+            else: bad = mid
+        return good
+    r = None
+    if exact(r0): r = r0                     # only the azimuth moved
+    else:
+        top = prev = min(r0, rmax)                     # nothing beyond rmax can be reached
+        for k in range(1, int(top / 5.0) + 1):         # inward: farthest not beyond the target
+            q = top - 5.0 * k
+            if q < 1.0: break
+            if exact(q): r = edge(q, prev); break
+            prev = q
+        if r is None:
+            prev = r0
+            for k in range(1, int((rmax - r0) / 5.0) + 2):   # outward: nearest beyond it
+                q = r0 + 5.0 * k
+                if exact(q): r = edge(q, prev); break
+                prev = q
+    if r is None: return None
+    return r * c, r * s, z, True
+
 # ---------------- state ----------------
 class S:
     cfg = load_cfg(); ser = None
