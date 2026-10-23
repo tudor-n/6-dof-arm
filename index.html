@@ -555,6 +555,7 @@ act('bhhome',{
  up:function(){homeDowns=Math.max(0,homeDowns-1);if(!homeDowns&&homeHold){clearTimeout(homeHold);homeHold=null;}},
  tap:function(){if(homeFired||homeDowns)return;var t=now();if(t-homeLast<=400){homeLast=0;goHome();}else homeLast=t;}
 });
+act('live',{tap:function(){send({type:'live',on:!(st&&st.live)});}});
 act('home',{tap:function(){send({type:'home'});}});
 act('rest',{tap:function(){send({type:'rest'});}});
 act('wake',{tap:function(){send({type:'relax',mask:0});}});
