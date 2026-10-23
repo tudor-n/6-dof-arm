@@ -52,7 +52,8 @@ body{position:fixed;left:0;top:0;right:0;bottom:0;color:#fff;font:400 15px/1.4 R
 /* top bar */
 #bar{left:0;top:0;width:1024px;height:56px;border-bottom:1px solid #262626;background:#000}
 .brand{left:0;top:0;width:92px;height:55px;line-height:55px;text-align:center;font-weight:600;font-size:13px;letter-spacing:.14em;text-indent:.14em;border-right:1px solid #262626}
-.brand.prs,.brand.arm{background:#ffb020;color:#000}
+.brand.prs{background:#fff;color:#000}
+.brand.arm{background:#ffb020;color:#000}
 #tabs{left:92px;top:0;height:55px;white-space:nowrap}
 .tab{display:inline-block;vertical-align:top;position:relative;height:55px;line-height:55px;padding:0 22px;font-weight:600;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:#8a8a8a;cursor:pointer}
 .tab.sel,.tab.prs{color:#fff}.tab.sel:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:#fff}
@@ -308,11 +309,12 @@ document.addEventListener('keydown',function(e){
 var LEGACY=!window.WebSocket||/[?&]legacy=1/.test(location.search);
 var ws=null, usePoll=LEGACY, wsFails=0, listeners=[], offline=false;
 var cid=Math.random().toString(36).slice(2)+Date.now().toString(36), outq=[], posting=false;
-function setOffline(on){if(offline!==on){offline=on;stDirty=true;schedule();}}
+function setOffline(on){if(offline!==on){offline=on;offSince=on?now():0;stDirty=true;schedule();}}
 function emit(m){if(offline)setOffline(false);for(var i=0;i<listeners.length;i++)listeners[i](m);}
 var DRAG={planar:1,joints:1,roll:1};
 function sameKeys(a,b){for(var k in a)if(!(k in b))return false;for(k in b)if(!(k in a))return false;return true;}
 function send(o){
+ if(o&&o.type=='live'&&o.on)liveAsk=now();  // HOME waits for the state that answers this
  // while a POST is in flight a newer drag position replaces the queued one instead of piling up behind it
  if(usePoll){
   // look back only across drag messages, so nothing ever jumps ahead of a command like stop
@@ -471,7 +473,7 @@ listeners.push(function(m){
  if(!infoSent){infoSent=true;setTimeout(function(){send({type:'client',info:window.innerWidth+'x'+window.innerHeight+' '+($('app').style.transform?'scaled':'native')+
   ' dpr='+(window.devicePixelRatio||1)+(LEGACY?' legacy':'')+' | '+navigator.userAgent});},1500);}
  if(m.type=='cfg'){cfg=m.cfg;drawKey=null;buildCal();setRanges();}
- else if(m.type=='state'){st=m;stDirty=true;}
+ else if(m.type=='state'){st=m;stDirty=true;stAt=now();}
  else return;
  schedule();
 });
@@ -512,37 +514,47 @@ function updateStatus(){
 act('stop',{down:function(){send({type:'stop'});}});
 
 // ---- HOME: back to the BrainHub tablet page that opened this one (BrainHub phase 3) ----
-// BrainHub's ROBOT button opens /?home=<its tablet URL>; it is kept in localStorage, so reloads
-// keep it. Without one, the brand stays "ARM-6" and nothing changes. Leaving is deliberate (hold
-// 600 ms, or tap twice within 400 ms), sits as far from STOP as the bar allows, and is refused
-// while LIVE is on: when the page goes, LIVE stays on and a move in progress runs on, with no STOP
-// on any screen.
-var HOME=null;
+// BrainHub's ROBOT button opens /?home=<its tablet URL>. Only that URL counts (an http(s) address
+// ending in /tablet), and it is not remembered: without it the brand stays "ARM-6" and nothing
+// changes. Leaving is deliberate (hold 600 ms, or tap twice within 400 ms) and sits as far from STOP
+// as the bar allows. It is refused while LIVE is on, just asked for, or not yet known, and while any
+// other control is held: when this page goes, LIVE stays on, a move in progress runs on and a held
+// grip keeps its target, with no STOP on any screen. Once the server has been out of reach for 5 s
+// this page couldn't STOP anything either, so leaving is allowed then.
+var HOME=null,stAt=0,liveAsk=0,offSince=0;
 (function(){
  var m=/[?&]home=([^&]+)/.exec(location.search),url=null;
- try{url=m?decodeURIComponent(m[1]):window.localStorage&&localStorage.getItem('bh.home');}catch(e){url=null;}
- if(url&&/^https?:\/\/[^\s"'<>]+$/.test(url)){HOME=url;try{if(m)localStorage.setItem('bh.home',url);}catch(e){}}
- if(!HOME)return;
- var b=$('brand');b.setAttribute('data-a','bhhome');txt(b,'\u2039 HOME');
+ try{url=m?decodeURIComponent(m[1]):null;}catch(e){url=null;}
+ if(!url||!/^https?:\/\/[^\s"'<>\/?#]+\/tablet$/.test(url))return;
+ HOME=url;
+ var b=$('brand');b.setAttribute('data-a','bhhome');txt(b,G('‹','<')+' HOME');
 })();
-var homeHold=null,homeLast=0,homeFired=false,homeFlash=null;
+var homeHold=null,homeLast=0,homeFired=false,homeFlash=null,homeDowns=0;
+function homeBlock(){
+ var t=now(),b=$('brand');
+ if(offline)return t-offSince>=5000?null:'WAIT';
+ if(!st)return 'WAIT';
+ if(st.live||(liveAsk>stAt&&t-liveAsk<2000))return 'LIVE ON';
+ for(var k in presses)if(presses.hasOwnProperty(k)&&presses[k].el!==b)return 'LET GO';
+ return null;
+}
 function goHome(){
- var b=$('brand');
- if(st&&st.live){
+ var b=$('brand'),why=homeBlock();
+ if(why){
   if(homeFlash)clearTimeout(homeFlash);
-  txt(b,'LIVE ON');tog(b,'arm',true);  // refused: turn LIVE off first
-  homeFlash=setTimeout(function(){homeFlash=null;tog(b,'arm',false);txt(b,'\u2039 HOME');},2000);
+  txt(b,why);tog(b,'arm',true);
+  homeFlash=setTimeout(function(){homeFlash=null;tog(b,'arm',false);txt(b,G('‹','<')+' HOME');},2000);
   return;
  }
- location.href=HOME;
+ location.replace(HOME);
 }
 // 'bhhome', never 'home': that name is the Start pose button's action (it moves the arm).
+// Two fingers on it count as one press: the hold runs until the last lifts, and a tap needs all up.
 act('bhhome',{
- down:function(){homeFired=false;homeHold=setTimeout(function(){homeHold=null;homeFired=true;goHome();},600);},
- up:function(){if(homeHold){clearTimeout(homeHold);homeHold=null;}},
- tap:function(){if(homeFired)return;var t=now();if(t-homeLast<=400){homeLast=0;goHome();}else homeLast=t;}
+ down:function(){homeDowns++;if(homeHold)return;homeFired=false;homeHold=setTimeout(function(){homeHold=null;homeFired=true;goHome();},600);},
+ up:function(){homeDowns=Math.max(0,homeDowns-1);if(!homeDowns&&homeHold){clearTimeout(homeHold);homeHold=null;}},
+ tap:function(){if(homeFired||homeDowns)return;var t=now();if(t-homeLast<=400){homeLast=0;goHome();}else homeLast=t;}
 });
-act('live',{tap:function(){send({type:'live',on:!(st&&st.live)});}});
 act('home',{tap:function(){send({type:'home'});}});
 act('rest',{tap:function(){send({type:'rest'});}});
 act('wake',{tap:function(){send({type:'relax',mask:0});}});
