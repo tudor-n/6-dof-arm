@@ -226,18 +226,26 @@ def ik_auto(x, y, z, p0, cfg, roll_servo=None):
     servo, reach, lim = ik(x, y, z, p0, cfg, roll_servo)
     return servo, True, lim
 
+FOLLOW_PITCHES = (-120.0, 30.0)   # tool pitch window reachable_target may use: down to tilted-up, never flipped
+
 def reachable_target(x, y, z, pitch, cfg, roll_servo=None):
-    """The point nearest (x, y, z) that the tool can hit EXACTLY at this pitch, keeping z, pitch
-    and (where the base allows) the azimuth. Returns (x, y, z, clamped) or None.
+    """The point nearest (x, y, z) that the tool can hit EXACTLY, and the pitch to hit it at.
+    Returns (x, y, z, pitch, clamped) or None.
 
-    Built for finger follow, which needs "as far as you can along that direction" with the
-    wrist held still. ik_auto is the wrong tool: its pitch sweep and shrink toward the base
-    would make the wrist flail and the height wander as the finger moves.
+    Built for finger follow. Hitting the point matters more than holding the wrist angle: on
+    this arm the wrist's travel is narrow enough that one fixed pitch reaches only a band of
+    the table (at 115 mm up, about 10 degrees of pitch reach any given spot), so a fixed pitch
+    would park the tool tens of mm from where the finger points while calling it the reach
+    limit. So the pitch is searched first, nearest to the preferred one so the wrist moves no
+    more than it must, and the point itself only moves when no pitch at all can reach it.
 
-    Over-reach goes to the farthest exact radius not beyond the target, too close to the
-    base to the nearest one beyond it. The radius is scanned in 5 mm steps before it is
-    bisected, because joint limits can cut the feasible radii into more than one interval,
-    and a plain bisection would silently assume there is only one.
+    ik_auto is still the wrong tool: it shrinks the target toward the base and lets the height
+    wander, where follow needs the height fixed and "as far as you can along that direction".
+
+    A point no pitch reaches goes to the nearest radius on the same azimuth (where the base
+    allows it) that some pitch reaches. Radii are scanned in 5 mm rings out from the target
+    before the boundary is bisected, because joint limits can cut the feasible radii into
+    more than one interval and a plain bisection would assume there is only one.
     """
     lo, hi = joint_ranges(cfg)[0]
     x = max(0.0, x)                          # never behind the base, as move_tip
@@ -246,37 +254,40 @@ def reachable_target(x, y, z, pitch, cfg, roll_servo=None):
     azc = math.radians(clamp(math.degrees(az), max(lo, -90.0), min(hi, 90.0)))
     roll = cfg["joints"][4]["zero"] if roll_servo is None else roll_servo   # ik's None is roll zero
     c, s = math.cos(azc), math.sin(azc)
-    def exact(r):
+    p0 = clamp(pitch, *FOLLOW_PITCHES)
+    def exact(r, p):
         px, py = r * c, r * s
-        servo, reach, lim = ik(px, py, z, pitch, cfg, roll_servo)
+        servo, reach, lim = ik(px, py, z, p, cfg, roll_servo)
         if reach or lim: return False
         return math.dist(fk(list(servo) + [roll, 90.0], cfg)[0][-1], (px, py, z)) <= 2.0
-    if abs(azc - az) < 1e-9 and exact(r0): return x, y, z, False
+    def pitches(step):                       # the window, nearest the preferred pitch first
+        n = int((FOLLOW_PITCHES[1] - FOLLOW_PITCHES[0]) / step) + 1
+        ps = [FOLLOW_PITCHES[0] + step * k for k in range(n)]
+        return sorted(ps, key=lambda q: (abs(q - p0), q))
+    def best_pitch(r, step=1.0):
+        if exact(r, p0): return p0
+        return next((q for q in pitches(step) if exact(r, q)), None)
+    moved = abs(azc - az) > 1e-9
+    p = best_pitch(r0)
+    if p is not None: return (r0 * c, r0 * s, z, p, True) if moved else (x, y, z, p, False)
     L = cfg["links"]; T = cfg.get("tool") or DEFAULT_TOOL
     rmax = L["L1"] + L["L2"] + L["L3"] + abs(T.get("along", 0.0)) + abs(T.get("perp", 0.0)) + 5.0
-    def edge(good, bad):                     # bisect the boundary to ~0.3 mm, ending on the good side
-        while abs(bad - good) > 0.3:
-            mid = 0.5 * (good + bad)
-            if exact(mid): good = mid
-            else: bad = mid
-        return good
-    r = None
-    if exact(r0): r = r0                     # only the azimuth moved
-    else:
-        top = prev = min(r0, rmax)                     # nothing beyond rmax can be reached
-        for k in range(1, int(top / 5.0) + 1):         # inward: farthest not beyond the target
-            q = top - 5.0 * k
-            if q < 1.0: break
-            if exact(q): r = edge(q, prev); break
-            prev = q
-        if r is None:
-            prev = r0
-            for k in range(1, int((rmax - r0) / 5.0) + 2):   # outward: nearest beyond it
-                q = r0 + 5.0 * k
-                if exact(q): r = edge(q, prev); break
-                prev = q
-    if r is None: return None
-    return r * c, r * s, z, True
+    coarse = pitches(3.0)                    # a coarse ring scan; the winner is refined below
+    hit = None; rs = min(r0, rmax)           # rings from the target, or from the reach limit beyond it
+    for k in range(1, int(rmax / 5.0) + 2):
+        for q in (rs - 5.0 * k, rs + 5.0 * k):       # nearer the base first on a tie
+            if not (1.0 <= q <= rmax): continue
+            pq = next((pp for pp in coarse if exact(q, pp)), None)
+            if pq is not None: hit = (q, pq); break
+        if hit: break
+    if hit is None: return None
+    good, pg = hit; bad = r0                  # bisect toward the target, at the pitch that worked
+    while abs(bad - good) > 0.3:
+        mid = 0.5 * (good + bad)
+        if exact(mid, pg): good = mid
+        else: bad = mid
+    pg = best_pitch(good) or pg               # and then the pitch nearest the preferred one there
+    return good * c, good * s, z, pg, True
 
 # ---------------- state ----------------
 class S:
@@ -513,7 +524,10 @@ def follow_tick(now):
         if out.target is None: kind = ""
         elif S.follow_pending and S.follow_kind == "reach": kind = "reach"   # still waiting to be reachable
         else: kind = "clamped" if S.follow_clamped else ""
-        if out.target is not None and S.follow_pending and now - S.follow_last_write >= 0.05:
+        # 50 ms between writes; an unreachable target retries every 0.5 s instead, since proving
+        # that nothing reaches it scans every pitch at every radius (~100 ms)
+        gap = 0.5 if S.follow_kind == "reach" else 0.05
+        if out.target is not None and S.follow_pending and now - S.follow_last_write >= gap:
             x, y = out.target
             # never anything derived from the finger: a fixed hover, so the arm cannot come down into the hand
             z = V.table_z(x, y) + max(60.0, float(V.s.get("follow_hover", 110.0)))
@@ -521,8 +535,8 @@ def follow_tick(now):
             S.follow_last_write = now     # also paces the retries of an unreachable target
             if r is None: kind = "reach"
             else:
-                rx, ry, rz, S.follow_clamped = r
-                servo, S.reach, S.limited = ik(rx, ry, rz, S.follow_pitch, S.cfg, S.tgt[4])
+                rx, ry, rz, rp, S.follow_clamped = r
+                servo, S.reach, S.limited = ik(rx, ry, rz, rp, S.cfg, S.tgt[4])
                 S.tgt[:4] = servo          # never roll or gripper
                 S.follow_target = (rx, ry, rz); S.follow_pending = False
                 kind = "clamped" if S.follow_clamped else ""

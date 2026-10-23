@@ -377,10 +377,30 @@ def polar(r, az_deg):
     return r * math.cos(math.radians(az_deg)), r * math.sin(math.radians(az_deg))
 
 
+def any_pitch_exact(x, y, z, cfg):
+    """Can ANY pitch in the follow window hit (x, y, z) exactly? 1 degree steps."""
+    lo, hi = S.FOLLOW_PITCHES
+    return any(exact_at(x, y, z, lo + k, cfg) for k in range(int(hi - lo) + 1))
+
+
 def test_reachable_target_leaves_a_reachable_point_alone():
     cfg = S.load_cfg()
     for x, y, z, pitch in TARGETS:
-        assert S.reachable_target(x, y, z, pitch, cfg, 90.0) == (x, y, z, False)
+        assert S.reachable_target(x, y, z, pitch, cfg, 90.0) == (x, y, z, pitch, False)
+
+
+def test_reachable_target_changes_the_pitch_before_it_moves_the_point():
+    """The bug this guards: pitch locked at whatever the arm happened to be at made follow park
+    the tool ~90 mm from a perfectly reachable spot, and call it the reach limit."""
+    cfg = S.load_cfg()
+    x, y, z, pref = 230.0, 50.0, 115.0, -32.0
+    assert not exact_at(x, y, z, pref, cfg), "the case needs a point the preferred pitch misses"
+    got = S.reachable_target(x, y, z, pref, cfg, 90.0)
+    assert got is not None and got[:3] == (x, y, z) and not got[4], f"should hit it exactly, got {got}"
+    p = got[3]
+    assert exact_at(x, y, z, p, cfg)
+    closer = p + (1.0 if pref > p else -1.0)
+    assert not exact_at(x, y, z, closer, cfg), f"pitch {p} is not the nearest workable one to {pref}"
 
 
 def test_reachable_target_clamps_an_over_reach_onto_the_boundary():
@@ -388,14 +408,26 @@ def test_reachable_target_clamps_an_over_reach_onto_the_boundary():
     cfg = S.load_cfg()
     for x, y, z, pitch in TARGETS:
         r0, az = math.hypot(x, y), math.degrees(math.atan2(y, x))
-        got = S.reachable_target(*polar(2 * r0, az), z, pitch, cfg, 90.0)
-        assert got is not None and got[3], f"{(x, y, z, pitch)} doubled should be clamped, got {got}"
-        gx, gy, gz, _ = got
+        got = S.reachable_target(*polar(700.0, az), z, pitch, cfg, 90.0)   # past any reach
+        assert got is not None and got[4], f"{(x, y, z, pitch)} at 700 mm should be clamped, got {got}"
+        gx, gy, gz, gp, _ = got
         r = math.hypot(gx, gy)
         assert abs(math.degrees(math.atan2(gy, gx)) - az) < 1e-6 and gz == z
-        assert r0 - 0.5 <= r < 2 * r0, f"r {r:.1f} for a reachable r {r0:.1f}"
-        assert exact_at(gx, gy, gz, pitch, cfg), "the clamped point itself is not reachable"
-        assert not exact_at(*polar(r + 1.0, az), z, pitch, cfg), f"r {r:.1f} is not the boundary"
+        assert r0 - 0.5 <= r < 700.0, f"r {r:.1f} for a reachable r {r0:.1f}"
+        assert exact_at(gx, gy, gz, gp, cfg), "the clamped point itself is not reachable"
+        # one 5 mm scan ring further out, no pitch reaches: this really is the edge
+        assert not any_pitch_exact(*polar(r + 6.0, az), z, cfg), f"r {r:.1f} is not the boundary"
+
+
+def test_reachable_target_clamps_a_wildly_far_point():
+    """A finger pointing off the far edge of the table is hundreds of mm past any reach. The
+    radius scan must still find the edge, not run out of rings before it gets back into range."""
+    cfg = S.load_cfg()
+    for x, y, z, pitch in TARGETS:
+        az = math.degrees(math.atan2(y, x))
+        got = S.reachable_target(*polar(1500.0, az), z, pitch, cfg, 90.0)
+        assert got is not None and got[4], f"{(x, y, z, pitch)} at 1500 mm should be clamped, got {got}"
+        assert exact_at(got[0], got[1], z, got[3], cfg)
 
 
 def test_reachable_target_clamps_the_azimuth_to_the_base_limits():
@@ -405,7 +437,7 @@ def test_reachable_target_clamps_the_azimuth_to_the_base_limits():
     r0 = math.hypot(x, y)
     for want, edge in ((hi + 15.0, hi), (lo - 15.0, lo)):
         got = S.reachable_target(*polar(r0, want), z, pitch, cfg, 90.0)
-        assert got is not None and got[3]
+        assert got is not None and got[4]
         assert abs(math.degrees(math.atan2(got[1], got[0])) - edge) < 0.01, f"azimuth {want:.0f} -> {got}"
         assert abs(math.hypot(got[0], got[1]) - r0) < 0.5, "a reachable radius should survive the azimuth clamp"
 
@@ -414,12 +446,12 @@ def test_reachable_target_pushes_a_too_close_point_outward():
     cfg = S.load_cfg()
     x, y, z, pitch = TARGETS[0]
     az = math.degrees(math.atan2(y, x))
-    assert not exact_at(*polar(10.0, az), z, pitch, cfg), "10 mm from the base should be unreachable"
+    assert not any_pitch_exact(*polar(10.0, az), z, cfg), "10 mm from the base should be unreachable"
     got = S.reachable_target(*polar(10.0, az), z, pitch, cfg, 90.0)
-    assert got is not None and got[3]
+    assert got is not None and got[4]
     r = math.hypot(got[0], got[1])
-    assert r > 10.0 and exact_at(got[0], got[1], z, pitch, cfg)
-    assert not exact_at(*polar(r - 1.0, az), z, pitch, cfg), f"r {r:.1f} is not the nearest reachable radius"
+    assert r > 10.0 and exact_at(got[0], got[1], z, got[3], cfg)
+    assert not any_pitch_exact(*polar(r - 6.0, az), z, cfg), f"r {r:.1f} is not the nearest reachable radius"
 
 
 def test_reachable_target_gives_up_on_a_hopeless_height():
