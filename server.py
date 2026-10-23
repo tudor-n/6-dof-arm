@@ -248,6 +248,7 @@ def reachable_target(x, y, z, pitch, cfg, roll_servo=None):
     more than one interval and a plain bisection would assume there is only one.
     """
     lo, hi = joint_ranges(cfg)[0]
+    behind = x < 0.0
     x = max(0.0, x)                          # never behind the base, as move_tip
     r0 = math.hypot(x, y)
     az = math.atan2(y, x) if r0 > 1e-6 else 0.0
@@ -267,7 +268,7 @@ def reachable_target(x, y, z, pitch, cfg, roll_servo=None):
     def best_pitch(r, step=1.0):
         if exact(r, p0): return p0
         return next((q for q in pitches(step) if exact(r, q)), None)
-    moved = abs(azc - az) > 1e-9
+    moved = behind or abs(azc - az) > 1e-9
     p = best_pitch(r0)
     if p is not None: return (r0 * c, r0 * s, z, p, True) if moved else (x, y, z, p, False)
     L = cfg["links"]; T = cfg.get("tool") or DEFAULT_TOOL
@@ -298,9 +299,10 @@ class S:
     clients = set(); port = None
     engaged = False; unlock = False; creep = None
     pick_task = None
-    # finger follow: target is the (x, y, z) last written, pitch is fixed for the session
+    # finger follow: target is the (x, y, z) last written, pitch the preferred one for the session
     follow = False; follow_status = ''; follow_state = 'idle'; follow_target = None
     follow_clamped = False; follow_pitch = None; follow_last_write = 0.0; follow_pending = False
+    follow_fail = None   # rounded target last proven unreachable, not retried until it moves
     follow_kind = ''   # the server's own condition inside a state: '', 'paused', 'reach', 'clamped'
 
 V = None   # Vision instance (or None when the camera is off)
@@ -450,8 +452,21 @@ async def pick_seq(x, y, closing):
 # ---------------- finger follow ----------------
 # Messages that mean a person has taken the arm over. Checked once at the top of handle(), so a
 # new manual control only has to be added here to be safe against a follow fighting it.
-FOLLOW_BREAKERS = frozenset(("stop", "home", "rest", "target", "tip", "planar", "joints", "pitch", "jog",
-                             "goto_click", "pick_click", "pick_detected", "nudge", "raw", "jointpos"))
+# Messages that may arrive while follow drives the arm. Everything else switches it off first:
+# an allowlist, because a list of the dangerous ones goes stale silently. Relax, creep, flip or
+# set-zero during follow would have the next finger move wake a limp servo under the operator's
+# hand, or solve with a mirrored joint. unlock and live are safe only when switching OFF.
+FOLLOW_SAFE = frozenset(("follow", "speed", "client", "resync", "vset", "detect", "cam_click",
+                         "pose_lock", "grip", "roll", "jaws"))
+FOLLOW_HOVER = (60.0, 200.0)   # mm above the table: never down into the hand, never out of reach
+
+def follow_breaks(t, m):
+    if t == "live": return not m.get("on")        # Live off stops it; on is a no-op
+    if t == "unlock": return bool(m.get("on"))    # the Camera tab sends unlock-off on every visit
+    return t not in FOLLOW_SAFE
+
+def follow_hover():
+    return clamp(float(V.s.get("follow_hover", 110.0)), *FOLLOW_HOVER)
 
 def follow_on():
     global FC, HT
@@ -471,17 +486,17 @@ def follow_on():
         return no(f"finger tracking could not load ({type(e).__name__}: {e})")
     ok, why = HT.available()
     if not ok: return no(why)
-    FC.reset(); HT.on_obs = FC.feed
+    FC.reset(time.time()); HT.on_obs = FC.feed
     try: HT.start()
     except Exception as e: return no(f"the hand tracker did not start ({e})")
     # Fixed for the session so the wrist does not wave around as the finger moves.
     fp = V.s.get("follow_pitch")
-    S.follow_pitch = fk(S.tgt, S.cfg)[1] if fp is None else float(fp)
+    S.follow_pitch = clamp(fk(S.tgt, S.cfg)[1] if fp is None else float(fp), *FOLLOW_PITCHES)
     S.follow, S.follow_state, S.follow_status = True, 'idle', 'show a pointing finger'
     S.follow_target, S.follow_clamped, S.follow_last_write, S.follow_pending = None, False, 0.0, False
-    S.follow_kind = ''
+    S.follow_kind, S.follow_fail = '', None
     log(f"Follow ON: point at the table. Tool pitch {S.follow_pitch:.0f}, hover "
-        f"{max(60.0, float(V.s.get('follow_hover', 110.0))):.0f} mm above the table", "ok")
+        f"{follow_hover():.0f} mm above the table", "ok")
 
 def follow_off(why, lvl="warn"):
     """The one way out of follow, for the toggle and every interlock. The arm keeps the
@@ -513,8 +528,9 @@ def follow_tick(now):
     ok, _ = V.pose_health()
     if not ok:
         # Hold, don't write: the finger's table position comes from the very pose that is bad.
-        # Whatever the controller wants is rewritten once the pose is back.
-        S.follow_pending = True
+        # Reset every tick so nothing seen through it survives (not the filters, not the
+        # rewind history); once the pose is back the finger has to arm again.
+        FC.reset(now)
         follow_note('holding', 'paused: camera pose unhealthy', 'paused')
     else:
         FC.p.lead_mm = float(V.s.get("follow_lead", 30.0))
@@ -524,16 +540,17 @@ def follow_tick(now):
         if out.target is None: kind = ""
         elif S.follow_pending and S.follow_kind == "reach": kind = "reach"   # still waiting to be reachable
         else: kind = "clamped" if S.follow_clamped else ""
-        # 50 ms between writes; an unreachable target retries every 0.5 s instead, since proving
-        # that nothing reaches it scans every pitch at every radius (~100 ms)
-        gap = 0.5 if S.follow_kind == "reach" else 0.05
-        if out.target is not None and S.follow_pending and now - S.follow_last_write >= gap:
+        if out.target is not None and S.follow_pending and now - S.follow_last_write >= 0.05:
             x, y = out.target
             # never anything derived from the finger: a fixed hover, so the arm cannot come down into the hand
-            z = V.table_z(x, y) + max(60.0, float(V.s.get("follow_hover", 110.0)))
-            r = reachable_target(x, y, z, S.follow_pitch, S.cfg, S.tgt[4])
-            S.follow_last_write = now     # also paces the retries of an unreachable target
-            if r is None: kind = "reach"
+            z = V.table_z(x, y) + follow_hover()
+            key = (round(x), round(y), round(z), round(S.tgt[4]))
+            # Proving nothing reaches a point scans every pitch at every radius (~35 ms on the
+            # event loop), so a point already proven unreachable is not tried again until it
+            # moves. FOLLOW_HOVER keeps the height reachable, so this is a backstop.
+            r = None if key == S.follow_fail else reachable_target(x, y, z, S.follow_pitch, S.cfg, S.tgt[4])
+            S.follow_last_write = now
+            if r is None: kind, S.follow_fail = "reach", key
             else:
                 rx, ry, rz, rp, S.follow_clamped = r
                 servo, S.reach, S.limited = ik(rx, ry, rz, rp, S.cfg, S.tgt[4])
@@ -671,7 +688,7 @@ async def control_loop():
 
 async def handle(ws, m):
     t = m.get("type")
-    if S.follow and (t in FOLLOW_BREAKERS or (t == "live" and not m.get("on"))):
+    if S.follow and follow_breaks(t, m):
         follow_off("STOP" if t == "stop" else "Live turned off" if t == "live" else f"manual control took over ({t})")
     if t == "target":
         S.tool = {k: float(m[k]) for k in ("x", "y", "z", "pitch")}

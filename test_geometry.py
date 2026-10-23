@@ -459,6 +459,24 @@ def test_reachable_target_gives_up_on_a_hopeless_height():
     assert S.reachable_target(x, y, 2000.0, pitch, S.load_cfg(), 90.0) is None
 
 
+def test_reachable_target_flags_a_point_behind_the_base():
+    """Behind the base is moved onto x >= 0; that is a clamp, and the UI must say so."""
+    got = S.reachable_target(-80.0, 20.0, 115.0, -32.0, S.load_cfg(), 90.0)
+    assert got is not None and got[4] and got[0] >= 0.0, got
+
+
+def test_follow_switches_off_for_anything_not_known_safe():
+    """An allowlist: relax, creep, flip or set-zero during follow would have the next finger move
+    wake a limp servo under the operator's hand, or solve with a mirrored joint (found in review)."""
+    for t in ("relax", "creep", "setzero", "flip", "setlim", "links", "stop", "jog", "tip", "home",
+              "rest", "nudge", "raw", "marker_record", "pick_click", "some_future_message"):
+        assert S.follow_breaks(t, {}), t
+    for t in ("follow", "speed", "client", "resync", "vset", "detect", "grip", "roll", "jaws"):
+        assert not S.follow_breaks(t, {}), t
+    assert S.follow_breaks("live", {"on": False}) and not S.follow_breaks("live", {"on": True})
+    assert S.follow_breaks("unlock", {"on": True}) and not S.follow_breaks("unlock", {"on": False})
+
+
 def test_finger_raycast_above_the_table():
     """A fingertip h mm above the table must be cast onto the plane h mm up, not the table:
     z_off is added to the plane's c, so it is the height above the plane at that XY."""
