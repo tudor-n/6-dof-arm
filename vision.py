@@ -854,7 +854,11 @@ class Vision:
         tp = None if tip is None else P(float(tip[0]), float(tip[1]))
         if tp is not None: cv2.circle(d, tp, 9, (0, 255, 0) if fo.get("pointing") else (160, 160, 160), 2)
         if pose and tg is not None:
-            g = P(*self.project([[float(c) for c in tg]])[0])
+            # on the table under the target, not at hover height: through a perspective camera a
+            # point 110 mm up lands well off the fingertip, which reads as a bad aim and invites
+            # "fixing" follow_finger_z, which really would break it
+            x, y = float(tg[0]), float(tg[1])
+            g = P(*self.project([[x, y, self.table_z(x, y)]])[0])
             if tp is not None: cv2.line(d, tp, g, (255, 255, 0), 1)
             cv2.drawMarker(d, g, (255, 255, 0), cv2.MARKER_CROSS, 16, 2)
         st = str(fo.get("state") or "")
