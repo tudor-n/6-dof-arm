@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Arm brain: inverse kinematics + web UI + serial link to the ESP32 + camera vision.
    pip install aiohttp pyserial opencv-contrib-python numpy ultralytics
-   python server.py --port COM5            real arm + camera 0
+   python server.py --port COM5            real arm + camera 0 (Linux: the first non-built-in USB camera)
    python server.py --sim                  no arm (camera still works, handy for checking vision)
    python server.py --port COM5 --camera 1 / --no-camera
 """
-import argparse, asyncio, collections, copy, json, math, time
+import argparse, asyncio, collections, copy, json, math, sys, time
 from pathlib import Path
 from aiohttp import web, WSMsgType
 try:
@@ -762,7 +762,8 @@ def main():
     ap.add_argument("--port", help="serial port, e.g. COM5 or /dev/ttyUSB0")
     ap.add_argument("--sim", action="store_true", help="no arm hardware (camera still runs)")
     ap.add_argument("--http", type=int, default=8080)
-    ap.add_argument("--camera", type=int, default=0, help="camera index")
+    ap.add_argument("--camera", type=int, default=None,
+                    help="camera index (default: 0 on Windows; on Linux, the first USB camera that isn't built in)")
     ap.add_argument("--no-camera", action="store_true")
     a = ap.parse_args()
     if not a.sim:
@@ -782,8 +783,14 @@ def main():
         else: print("WARNING: ESP32 didn't answer GET - is the new firmware flashed? Assuming start pose.")
     if not a.no_camera:
         try:
-            from vision import Vision
-            V = Vision(HERE, a.camera, log)
+            from vision import Vision, find_camera
+            cam = a.camera
+            if cam is None:
+                cam = 0
+                if sys.platform.startswith("linux"):
+                    cam, name, why = find_camera()
+                    print(f"Camera {cam} ({name or 'unnamed'}): {why}. Override with --camera N")
+            V = Vision(HERE, cam, log)
         except Exception as e:
             print("Vision disabled:", e)
     S.tool = tool_from_tgt()
