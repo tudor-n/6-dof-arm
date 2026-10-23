@@ -19,7 +19,17 @@ DEFAULT_SETTINGS = {
     "grip_open": 130.0, "grip_close": 50.0,
     "drop_x": 100.0, "drop_y": 200.0, "drop_z": 180.0,
     "show_grid": True, "show_tip": True, "show_markers": True,
+    # finger follow (server.py): the arm hovers follow_hover above the table (never under 60 mm,
+    # never lower because of the finger), over the spot follow_lead mm ahead of the fingertip.
+    # follow_finger_z is the height the fingertip is assumed to be at for the raycast: one camera
+    # has no depth, so a finger held higher than this aims further from the camera.
+    "follow_hover": 110.0, "follow_finger_z": 15.0, "follow_lead": 30.0,
+    "follow_pitch": None,                  # None = the tool pitch when follow is switched on
+    "follow_deadband": 3.0,                # mm the aim must move before the arm is sent anywhere
 }
+# MediaPipe's 21-landmark hand: thumb, index, middle, ring, pinky, and the palm across them
+HAND_EDGES = ((0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11),
+              (11, 12), (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (17, 18), (18, 19), (19, 20), (0, 17))
 # Hand-measured distances between marker centres, "<lo>-<hi>" -> mm. This is the only
 # ground truth in the system that does not come from the arm itself, so it is what catches
 # a forward-kinematics error - everything else is FK-derived and therefore self-consistent
@@ -196,6 +206,7 @@ class Vision:
         self.jpg = None; self.seq = 0
         self.annot = None; self.small = None; self.small_key = None   # overlaid frame + its downscaled JPEG
         self.tip_cur = self.tip_tgt = None; self.jaw_deg = None
+        self.follow_overlay = None   # set by server.py while following: {lm, tip, pointing, target, state}
         self.click = None          # (x, y, u, v) in full-res pixels
         self.detect_on = False; self.prompts = ["screwdriver", "tool handle", "metal tool", "pen", "pencil"]
         self.dets = []; self.track = deque(maxlen=5)
@@ -226,7 +237,7 @@ class Vision:
         if key not in DEFAULT_SETTINGS: return
         d = DEFAULT_SETTINGS[key]
         if isinstance(d, bool): val = bool(val)
-        elif key == "pick_pitch": val = None if val in (None, "") else float(val)
+        elif key in ("pick_pitch", "follow_pitch"): val = None if val in (None, "") else float(val)
         else: val = float(val)
         self.s[key] = val; self.save()
 
@@ -824,8 +835,31 @@ class Vision:
         if pose and self.rejects:
             cv2.putText(d, f"{self.rejects} solves rejected - pose is stale", (12, 46),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+        fo = self.follow_overlay
+        if fo:
+            # Written by another thread and partly by MediaPipe: a bad value costs this frame's
+            # hand drawing, never the stream.
+            try: self._draw_follow(d, P, fo, pose, 68 if pose and self.rejects else 46)
+            except Exception: pass
         ok, buf = cv2.imencode(".jpg", d, [cv2.IMWRITE_JPEG_QUALITY, 80])
         if ok: self.annot = d; self.jpg = buf.tobytes(); self.seq += 1
+
+    def _draw_follow(self, d, P, fo, pose, y):
+        """Finger follow: hand skeleton, fingertip ring, the arm's target and a banner line.
+        Landmarks and the tip are full-res pixels; the target is a 3D arm-frame point."""
+        lm, tip, tg = fo.get("lm"), fo.get("tip"), fo.get("target")
+        if lm is not None and len(lm) == 21:
+            q = [P(float(p[0]), float(p[1])) for p in lm]
+            for a, b in HAND_EDGES: cv2.line(d, q[a], q[b], (170, 170, 170), 1)
+        tp = None if tip is None else P(float(tip[0]), float(tip[1]))
+        if tp is not None: cv2.circle(d, tp, 9, (0, 255, 0) if fo.get("pointing") else (160, 160, 160), 2)
+        if pose and tg is not None:
+            g = P(*self.project([[float(c) for c in tg]])[0])
+            if tp is not None: cv2.line(d, tp, g, (255, 255, 0), 1)
+            cv2.drawMarker(d, g, (255, 255, 0), cv2.MARKER_CROSS, 16, 2)
+        st = str(fo.get("state") or "")
+        col = {"tracking": (0, 255, 0), "arming": (0, 165, 255), "holding": (0, 165, 255)}.get(st, (170, 170, 170))
+        cv2.putText(d, f"FOLLOW {st.upper()}", (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
 
     def small_jpg(self, w, h, q=60):
         """The overlaid frame re-encoded at w x h: the old tablet then neither rescales nor decodes
