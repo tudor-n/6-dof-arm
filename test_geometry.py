@@ -345,6 +345,14 @@ def test_ik_fk_round_trip_across_the_roll_range():
         assert round_trip(cfg, roll) < 1.0, f"round trip broke at roll {roll}"
 
 
+def test_ik_fk_round_trip_with_a_roll_gain():
+    """ik() and fk() must turn the roll servo into the same angle, gain included."""
+    cfg = cfg_with(along=12.0, perp=30.0, lateral=8.0)
+    cfg["joints"][4]["gain"] = 0.78
+    for roll in (10.0, 60.0, 120.0, 165.0):
+        assert round_trip(cfg, roll) < 1.0, f"round trip broke at roll {roll}"
+
+
 def test_ik_round_trip_still_works_without_a_tool_offset():
     assert round_trip(cfg_with(along=0.0, perp=0.0, lateral=0.0), 90.0) < 1.0
 
@@ -1115,6 +1123,52 @@ def test_grasp_depth_survives_the_whole_pick_chain():
     assert after_move < 0.0, f"grasp should end up below the base plane, got {after_move:.2f}"
     assert abs(after_move - want) < 1e-9, (
         f"something clamped the intended grasp: wanted {want:.2f}, got {after_move:.2f}")
+
+
+# --------------------------------------------------------------------------- wrist roll
+
+def with_roll(fn, zero=168.6, sign=-1, gain=90 / 116, lo=8.1, hi=168.6):
+    """Run fn with the measured roll calibration in place of whatever is loaded."""
+    import copy, types
+    old_v, old_cfg = S.V, S.S.cfg
+    S.S.cfg = copy.deepcopy(old_cfg); J = S.S.cfg["joints"][4]
+    J.update(gain=gain, min=lo, max=hi)
+    S.V = types.SimpleNamespace(roll={"zero": zero, "sign": sign})
+    try: return fn()
+    finally: S.V, S.S.cfg = old_v, old_cfg
+
+
+def test_roll_along_the_arm_is_the_measured_zero():
+    # observed: servo 169 = jaws open in height, i.e. close along the arm's line (168.6 is the limit)
+    assert abs(with_roll(lambda: S.world_to_servo_roll(30.0, 30.0)) - 168.6) < 1e-6
+
+
+def test_roll_across_the_arm_uses_the_gain():
+    # observed: servo 53 = jaws open in width, i.e. close across the arm
+    assert abs(with_roll(lambda: S.world_to_servo_roll(120.0, 30.0)) - 53.0) < 0.5
+
+
+def test_roll_servo_up_turns_the_jaws_clockwise():
+    # observed: servo 90 (between 53 and 169) tilts the left finger up, so the jaws sit
+    # anticlockwise of the arm's line, about (168.6 - 90) * gain = 61 deg
+    servo = with_roll(lambda: S.world_to_servo_roll(61.0, 0.0))
+    assert abs(servo - 90.0) < 0.5, servo
+
+
+def test_roll_out_of_reach_takes_the_closest_limit():
+    # 13 deg clockwise of the arm's line: the screenshot's pen. Needs servo ~186, past 168.6;
+    # 168.6 is 0.3 deg from along-the-arm (13 deg off), the other limit is ~42 deg off
+    assert abs(with_roll(lambda: S.world_to_servo_roll(-33.0, -20.0)) - 168.6) < 1e-6
+
+
+def test_roll_overlay_matches_the_command():
+    def go():
+        g = S.S.cfg["joints"][4]["gain"]
+        for want in (0.0, 45.0, 90.0, 120.0):
+            servo = S.world_to_servo_roll(want + 10.0, 10.0)
+            got = S.jaw_rel(servo, S.V.roll, g) % 180.0
+            assert abs(got - want) < 1e-6, f"commanded {want}, overlay would show {got}"
+    with_roll(go)
 
 
 # ------------------------------------------------------------------------- camera choice

@@ -165,7 +165,8 @@ def ik(x, y, z, pitch, cfg, roll_servo=None):
     L = cfg["links"]; L0, L1, L2, L3 = L["L0"], L["L1"], L["L2"], L["L3"]
     p = math.radians(pitch)
     J4 = cfg["joints"][4]
-    roll = math.radians(J4["sign"] * ((J4["zero"] if roll_servo is None else roll_servo) - J4["zero"]))
+    roll = math.radians(J4["sign"] * ((J4["zero"] if roll_servo is None else roll_servo) - J4["zero"])
+                        * J4.get("gain", 1.0))   # the same angle roll_angle() gives fk()
     tx, ty, tz = x, y, z
     for _ in range(4 if has_tool(cfg) else 0):
         yaw_i = math.atan2(ty, tx) if math.hypot(tx, ty) > 1e-6 else 0.0
@@ -301,14 +302,28 @@ def tip_azimuth(servo=None):
     x, y, _ = fk(S.tgt if servo is None else servo, S.cfg)[0][-1]
     return math.degrees(math.atan2(y, x))
 
+def jaw_rel(servo, roll, gain):
+    """Roll servo -> jaw-closing direction relative to the arm's line, in table degrees (CCW from above)."""
+    return roll["sign"] * (servo - roll["zero"]) * gain
+
 def world_to_servo_roll(closing_deg, az_deg):
-    """Jaw-closing direction in table coordinates -> roll servo value, using the calibrated zero and sign."""
-    R = V.roll; J = S.cfg["joints"][4]
+    """Jaw-closing direction in table coordinates -> roll servo value, using the calibrated zero and sign.
+
+    The roll servo turns `gain` degrees per degree commanded (config.json, joint 4), so its
+    limits usually span less than the 180 degrees of jaw orientation. A direction outside
+    them gets the limit that comes closest, and a warning saying how far off that is.
+    """
+    R = V.roll; J = S.cfg["joints"][4]; g = J.get("gain", 1.0) or 1.0
     lo, hi = min(J["min"], J["max"]), max(J["min"], J["max"])
     rel = ((closing_deg - az_deg + 90.0) % 180.0) - 90.0
-    cands = [R["zero"] + R["sign"] * (rel + k) for k in (0, 180, -180)]
+    cands = [R["zero"] + R["sign"] * (rel + k) / g for k in (0, 180, -180)]
     ok = [c for c in cands if lo <= c <= hi]
-    return min(ok, key=lambda c: abs(c - R["zero"])) if ok else clamp(cands[0], lo, hi)
+    if ok: return min(ok, key=lambda c: abs(c - R["zero"]))
+    def miss(c): return abs(((jaw_rel(c, R, g) - rel + 90.0) % 180.0) - 90.0)
+    best = min((lo, hi), key=miss)
+    if miss(best) > 2.0: log(f"roll: jaws cannot turn to {closing_deg:.0f} deg here; the roll limit {best:.0f} is the closest, "
+                             f"{miss(best):.0f} deg off", "warn")
+    return best
 
 def do_stop():
     if S.pick_task and not S.pick_task.done(): S.pick_task.cancel()
@@ -457,7 +472,8 @@ async def control_loop():
                 last_sent = list(S.cur)
         if V is not None:   # feed the camera overlay with where the arm thinks its tip is
             tip = fk(S.cur, S.cfg)[0][-1]; V.tip_cur = tip; V.tip_tgt = fk(S.tgt, S.cfg)[0][-1]
-            R = V.roll; V.jaw_deg = (math.degrees(math.atan2(tip[1], tip[0])) + R["sign"] * (S.cur[4] - R["zero"])) % 180.0
+            g = S.cfg["joints"][4].get("gain", 1.0) or 1.0
+            V.jaw_deg = (math.degrees(math.atan2(tip[1], tip[0])) + jaw_rel(S.cur[4], V.roll, g)) % 180.0
         tick += 1
         if tick % 50 == 0: reap_polls()
         while NEWLOGS: await broadcast(NEWLOGS.pop(0))
