@@ -1,6 +1,6 @@
 /* cam_panel.js - injected into index.html by server.py. Adds the Camera tab (video, tap-to-target,
-   detection + pick, jog), its Setup sub-page (marker calibration, wrist roll calibration, pick settings,
-   XYZ entry), the in-app keyboard for the detect prompt, and the log / warnings sheet.
+   detection + pick, finger follow, jog), its Setup sub-page (marker calibration, wrist roll calibration, pick
+   and follow settings, XYZ entry), the in-app keyboard for the detect prompt, and the log / warnings sheet.
    Plain ES5 like index.html (Android 4.2 WebView), sharing index.html's connection, press handling,
    keypad and dirty-write helpers through window.ARM. Same fixed 1024x600 absolute layout. */
 (function () {
@@ -32,7 +32,10 @@
     '.wi2{border:1px solid #ffb020;border-radius:3px;padding:8px 10px;margin-bottom:8px;font-size:13px;line-height:18px;color:#ffb020}.wi2.err{border-color:#d92d20;color:#ff6a5c}.wi2.ok{border-color:#30d158;color:#30d158}',
     '#logbox{font-size:12px;line-height:18px}#logbox div{white-space:pre-wrap;border-bottom:1px solid #141414}',
     '.l-warn{color:#ffb020}.l-err{color:#ff6a5c}.l-ok{color:#30d158}.l-info{color:#fff}#logbox.wo .l-info{display:none}',
-    '#cflag{left:28px;top:68px;height:28px;line-height:26px;padding:0 10px;border:1px solid #ffb020;border-radius:3px;color:#ffb020;font-size:12px;white-space:nowrap}'
+    '#cflag{left:28px;top:68px;height:28px;line-height:26px;padding:0 10px;border:1px solid #ffb020;border-radius:3px;color:#ffb020;font-size:12px;white-space:nowrap}',
+    // follow toggle while on: green = tracking the finger, amber = arming / holding (plain .on = waiting for a pointing hand)
+    '.b.on.fg{background:#30d158;border-color:#30d158;color:#000}.b.on.fa{background:#ffb020;border-color:#ffb020;color:#000}',
+    '.b.on.fg.prs,.b.on.fa.prs{background:#b8b8b8;border-color:#b8b8b8}'
   ].join('\n');
   document.head.appendChild(css);
   function el(h) { var d = document.createElement('div'); d.innerHTML = h; return d.firstChild; }
@@ -87,7 +90,11 @@
     '    ' + B('pr', 'pickd', 264, 52, 70, 'Pick'),
     '    <div id="cdets" class="x m d" style="left:16px;top:112px;width:318px;font-size:12px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>',
     '   </div>',
-    '   ' + B('', 'jogo', 16, 305, 318, 'Jog tip ' + A.RARR),
+    '   <div class="x bb" style="left:0;top:289px;width:349px;height:104px">',
+    '    ' + B('', 'follow', 16, 16, 318, 'Follow finger', ' id="cfol"'),
+    '    <div id="cfols" class="x m d" style="left:16px;top:76px;width:318px;font-size:12px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>',
+    '   </div>',
+    '   ' + B('', 'jogo', 16, 408, 318, 'Jog tip ' + A.RARR),
     '  </div>',
     '  <div id="cjog" class="x" style="left:0;top:0;width:349px;height:472px;display:none">',
     '   <div class="x lb" style="left:16px;top:14px">Jog tip · mm</div>',
@@ -109,7 +116,11 @@
     ['z_grasp_offset', 'Grasp z = table z + this', 'mm'], ['z_floor', 'Lowest allowed tip z', 'mm'],
     ['pick_pitch', 'Pick tool pitch', 'blank = keep current, ' + MINUS + '90 = straight down'], ['grip_open', 'Gripper open value', ''], ['grip_close', 'Gripper close value', ''],
     ['drop_x', 'Drop X', 'mm'], ['drop_y', 'Drop Y', 'mm'], ['drop_z', 'Drop Z', 'mm']];
-  var SUBS = [['back', A.LARR + ' Camera'], ['mk', 'Markers'], ['roll', 'Wrist roll'], ['set', 'Pick settings'], ['xyz', 'Go to XYZ'], ['log', 'Log & warnings']];
+  var FOL = [['follow_hover', 'Hover height above table', 'mm, never below 60'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
+    ['follow_lead', 'Aim ahead of the fingertip', 'mm'], ['follow_deadband', 'Deadband', 'mm, ignores hand tremor'],
+    ['follow_pitch', 'Follow tool pitch', 'blank = pitch at engage, ' + MINUS + '90 = down']];
+  var BLANK = { pick_pitch: 1, follow_pitch: 1 };   // settings where blank means "keep the current pitch"
+  var SUBS = [['back', A.LARR + ' Camera'], ['mk', 'Markers'], ['roll', 'Wrist roll'], ['set', 'Pick settings'], ['fol', 'Finger follow'], ['xyz', 'Go to XYZ'], ['log', 'Log & warnings']];
   var sh = '<div class="x br" style="left:0;top:0;width:260px;height:472px"><div class="x lb" style="left:20px;top:16px">Camera setup</div>';
   each(SUBS, function (s, i) { sh += '<div id="su' + s[0] + '" class="cr nodot" data-a="sub" data-s="' + s[0] + '" style="top:' + (39 + i * 52) + 'px"><span class="nm">' + esc(s[1]) + '</span></div>'; });
   sh += '</div>';
@@ -129,13 +140,20 @@
     B('h44', 'crz', 28, 188, 170, 'Set zero here') + B('h44', 'crf', 206, 188, 170, 'Flip direction') +
     '<div class="x lb" style="left:28px;top:256px">Jaws to table angle · °</div>' + A.fieldHTML('cja', 28, 274, 140) + B('', 'crj', 176, 274, 170, 'Rotate jaws') +
     '<div id="crinfo" class="x m d" style="left:28px;top:342px;width:708px;font-size:12px;line-height:18px"></div></div>';
-  // pick settings
-  sh += '<div id="sxset" class="x" style="left:260px;top:0;width:764px;height:472px;display:none">';
-  each(SET, function (a, i) {
-    var l = 28 + (i % 2) * 360, t = 20 + Math.floor(i / 2) * 60;
-    sh += '<div class="x sl2" style="left:' + l + 'px;top:' + (t + 8) + 'px;width:220px">' + esc(a[1]) + (a[2] ? '<br><span class="f">' + esc(a[2]) + '</span>' : '') + '</div>' + A.fieldHTML('set_' + a[0], l + 228, t + 2, 118);
-  });
-  sh += '<div class="x f" style="left:28px;top:392px;font-size:13px;line-height:16px">Values are saved to vision.json as soon as you press SET.</div></div>';
+  // pick settings, follow settings: two columns of label + vision.json field
+  function setGrid(list) {
+    var h = '';
+    each(list, function (a, i) {
+      var l = 28 + (i % 2) * 360, t = 20 + Math.floor(i / 2) * 60;
+      h += '<div class="x sl2" style="left:' + l + 'px;top:' + (t + 8) + 'px;width:220px">' + esc(a[1]) + (a[2] ? '<br><span class="f">' + esc(a[2]) + '</span>' : '') + '</div>' + A.fieldHTML('set_' + a[0], l + 228, t + 2, 118);
+    });
+    return h;
+  }
+  var SAVED = '<div class="x f" style="left:28px;top:392px;font-size:13px;line-height:16px">Values are saved to vision.json as soon as you press SET.</div>';
+  sh += '<div id="sxset" class="x" style="left:260px;top:0;width:764px;height:472px;display:none">' + setGrid(SET) + SAVED + '</div>';
+  sh += '<div id="sxfol" class="x" style="left:260px;top:0;width:764px;height:472px;display:none">' + setGrid(FOL) +
+    '<div class="x sl2" style="left:28px;top:212px;width:708px">With <b>Follow finger</b> on, point with your index finger (other fingers curled) and the tool hovers at the hover height over the spot just ahead of your fingertip. Curl the finger or pull the hand away and it holds. ' +
+    'The camera cannot see how high your finger is, so it assumes the finger height above: if the aim is always off away from or toward the camera, change it. On a keyboard, F toggles follow.</div>' + SAVED + '</div>';
   // xyz
   sh += '<div id="sxxyz" class="x" style="left:260px;top:0;width:764px;height:472px;display:none">' +
     '<div id="ctip" class="x m" style="left:28px;top:20px;width:708px;font-size:14px;line-height:18px;white-space:nowrap"></div>' +
@@ -240,6 +258,17 @@
   act('cpick', { tap: function () { send({ type: 'pick_click' }); } });
   act('pickd', { tap: function () { send({ type: 'pick_detected' }); } });
   act('det', { tap: function () { send({ type: 'detect', on: !(V && V.detect), prompt: promptText() }); } });
+  // follow: the server owns the state (and switches it off on any manual move); this only asks to flip it
+  function followOn() { return !!(S && S.follow && S.follow.on); }
+  function toggleFollow() { send({ type: 'follow', on: !followOn() }); }
+  act('follow', { tap: toggleFollow });
+  // F toggles follow on a keyboard, unless something is being typed (the detect keyboard or the number pad has the keys)
+  document.addEventListener('keydown', function (e) {
+    if (e.keyCode != 70 || e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
+    if (KB.open || A.pad.id) return;
+    var tn = e.target && e.target.tagName; if (tn == 'INPUT' || tn == 'TEXTAREA' || tn == 'SELECT') return;
+    toggleFollow(); e.preventDefault();
+  });
   var jogOpen = false;
   function setJog(on) { jogOpen = on; show($('ctgt'), !on); show($('cjog'), on); sDirty = vDirty = true; A.schedule(); }
   act('jogo', { tap: function () { setJog(true); } });
@@ -257,8 +286,8 @@
   act('crj', { tap: function () { send({ type: 'jaws', angle: jawAngle }); } });
   var croll = A.Slider($('crollS'), { size: 556, thumb: 32, min: 0, max: 180, step: 1,
     onInput: function (v) { txt($('crollv'), f0(v)); A.sendDrag('roll', { type: 'roll', angle: v }); }, onEnd: function () { A.flush(); } });
-  each(SET, function (a) {
-    A.field('set_' + a[0], { label: a[1], hint: a[2], blank: a[0] == 'pick_pitch',
+  each(SET.concat(FOL), function (a) {
+    A.field('set_' + a[0], { label: a[1], hint: a[2], blank: !!BLANK[a[0]],
       get: function () { return V ? V.settings[a[0]] : null; },
       set: function (v) { send({ type: 'vset', key: a[0], value: v }); } });
   });
@@ -371,6 +400,11 @@
       });
     }
     if (!sub && jogOpen) txt($('cjtip'), 'X ' + f1(t.x) + '   Y ' + f1(t.y) + '   Z ' + f1(t.z));
+    if (!sub && !jogOpen) {   // servers without follow send no S.follow: shown as off
+      var fo = S.follow, on = !!(fo && fo.on), fs = on ? fo.state : '', fb = $('cfol');
+      tog(fb, 'on', on); tog(fb, 'fg', fs == 'tracking'); tog(fb, 'fa', fs == 'arming' || fs == 'holding');
+      txt($('cfols'), on && fo.status ? fo.status : '');
+    }
     if (sub == 'roll' && croll.drag == null) { croll.set(Math.round(t.roll)); txt($('crollv'), f0(t.roll)); }
   }
   function warnings() {
@@ -435,6 +469,8 @@
       txt($('crinfo'), 'roll zero = servo ' + V.roll.zero + '   servo up turns jaws ' + (V.roll.sign > 0 ? 'CCW' : 'CW') + ' (from above)' + (V.jaw != null ? '   jaws now close along ' + V.jaw.toFixed(0) + '° (table)' : ''));
     } else if (sub == 'set') {
       each(SET, function (a) { var v = V.settings[a[0]]; A.fieldShow('set_' + a[0], v == null ? 'keep' : String(v)); });
+    } else if (sub == 'fol') {   // an older server has no follow_* keys: a dash, not a value
+      each(FOL, function (a) { var v = V.settings[a[0]]; A.fieldShow('set_' + a[0], v != null ? String(v) : BLANK[a[0]] && a[0] in V.settings ? 'keep' : MINUS); });
     }
   }
 
