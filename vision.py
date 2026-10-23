@@ -118,6 +118,33 @@ def camera_centre(rvec, tvec):
     return (-R.T @ np.asarray(tvec, float).reshape(3, 1)).ravel()
 
 
+def find_camera(sysfs="/sys/class/video4linux"):
+    """Pick the arm's camera on Linux: the first one plugged into a removable USB port.
+
+    A laptop's built-in webcam is also a USB device, so "USB" alone doesn't tell them apart;
+    what does is that it sits on a port the firmware marks "fixed". Each camera also exposes
+    a second, metadata-only node, so only nodes with index 0 are real capture devices.
+    Falls back to a name without "integrated", then to the first camera, then to 0.
+    Returns (index, name, reason).
+    """
+    def read(p):
+        try: return Path(p).read_text().strip()
+        except OSError: return ""
+    found = []
+    for dev in Path(sysfs).glob("video*"):
+        num = dev.name[len("video"):]
+        if not num.isdigit() or read(dev / "index") not in ("", "0"): continue
+        usb = (dev / "device").resolve().parent      # interface -> the USB device it belongs to
+        found.append((int(num), read(dev / "name"), read(usb / "removable")))
+    found.sort()
+    for idx, name, rem in found:
+        if rem == "removable": return idx, name, "on a removable USB port"
+    for idx, name, rem in found:
+        if rem != "fixed" and "integrated" not in name.lower(): return idx, name, "not the built-in webcam"
+    if found: return found[0][0], found[0][1], "the only kind found"
+    return 0, "", "none listed, using the default"
+
+
 class Vision:
     def __init__(self, here, cam_index, log):
         self.here, self.cam_index, self.log = Path(here), cam_index, log

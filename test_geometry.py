@@ -1117,6 +1117,52 @@ def test_grasp_depth_survives_the_whole_pick_chain():
         f"something clamped the intended grasp: wanted {want:.2f}, got {after_move:.2f}")
 
 
+# ------------------------------------------------------------------------- camera choice
+
+def fake_sysfs(cams):
+    """A throwaway /sys/class/video4linux. cams: (node, name, index, usb port, removable)."""
+    import tempfile
+    from pathlib import Path
+    root = Path(tempfile.mkdtemp())
+    for node, name, index, port, removable in cams:
+        usb = root / "devices" / port
+        (usb / f"{port}:1.0").mkdir(parents=True, exist_ok=True)
+        if removable is not None: (usb / "removable").write_text(removable + "\n")
+        d = root / "class" / f"video{node}"
+        d.mkdir(parents=True)
+        (d / "name").write_text(name + "\n"); (d / "index").write_text(f"{index}\n")
+        (d / "device").symlink_to(usb / f"{port}:1.0")
+    return root / "class"
+
+
+LAPTOP = [(0, "Integrated Camera", 0, "1-6", "fixed"), (1, "Integrated Camera", 1, "1-6", "fixed"),
+          (2, "USB 2.0 Camera", 0, "1-9", "removable"), (3, "USB 2.0 Camera", 1, "1-9", "removable")]
+
+
+def test_find_camera_skips_the_built_in_webcam():
+    idx, name, _ = V.find_camera(fake_sysfs(LAPTOP))
+    assert idx == 2, f"picked video{idx} ({name}) instead of the USB camera"
+
+
+def test_find_camera_ignores_metadata_nodes():
+    cams = [(0, "Integrated Camera", 0, "1-6", "fixed"), (1, "USB 2.0 Camera", 1, "1-9", "removable"),
+            (2, "USB 2.0 Camera", 0, "1-9", "removable")]
+    assert V.find_camera(fake_sysfs(cams))[0] == 2
+
+
+def test_find_camera_falls_back_on_the_name_when_ports_are_unmarked():
+    cams = [(0, "Integrated Camera", 0, "1-6", None), (2, "USB 2.0 Camera", 0, "1-9", None)]
+    assert V.find_camera(fake_sysfs(cams))[0] == 2
+
+
+def test_find_camera_uses_the_webcam_when_it_is_the_only_one():
+    assert V.find_camera(fake_sysfs(LAPTOP[:2]))[0] == 0
+
+
+def test_find_camera_defaults_to_zero_with_no_cameras():
+    assert V.find_camera("/nonexistent")[0] == 0
+
+
 # ------------------------------------------------------------------------------- runner
 
 def main():
