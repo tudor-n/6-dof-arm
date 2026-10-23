@@ -5,10 +5,14 @@ server.py turns a target into joint angles. The pieces:
   classify_pointing  pure test on MediaPipe world landmarks: index straight, the rest curled
   OneEuro            the standard One Euro low-pass, per axis
   FollowController   pure state machine: debounce, filtering, deadband, jump rejection, hold
+  HandTracker        thread running MediaPipe's hand landmarker on vision.frame
+Needs: pip install mediapipe   (only for HandTracker; the rest is plain Python)
 """
-import math, threading
+import importlib.util, math, os, threading, time, urllib.request
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
+import cv2
 
 # MediaPipe hand landmark indices
 WRIST = 0
@@ -18,6 +22,11 @@ CURLERS = ((9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20))   # middle, ring
 STRAIGHT_DEG = 150.0     # index PIP and DIP must both be straighter than this
 EXTEND_RATIO = 1.15      # |wrist->tip| over |wrist->PIP| for an extended index
 CURL_DEG = 120.0         # a PIP bent past this counts as curled
+
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+DETECT_W = 640           # the landmarker gains nothing from full res, and 1080p would cost the frame rate
+TRACK_HZ = 30.0
+ERR_EVERY_S = 5.0        # at most one error log line per this many seconds
 
 
 @dataclass
@@ -232,3 +241,125 @@ class FollowController:
             else:
                 status = {"idle": "show a pointing finger", "arming": "arming", "tracking": "tracking"}[self.state]
             return FollowOut(self.target, changed, self.state, status)
+
+
+class HandTracker:
+    """MediaPipe hand landmarker on the newest camera frame, in a daemon thread.
+
+    Only works while running (follow is on); stop() just parks the thread so the model
+    stays loaded for next time. MediaPipe and the model load lazily inside the thread,
+    because the import alone takes a while and the model may need downloading.
+    """
+    def __init__(self, vision, log, here):
+        self.v, self.log, self.here = vision, log, Path(here)
+        self.model = self.here / "weights" / "hand_landmarker.task"
+        self.latest = None
+        self.running = False
+        self.error = ""             # '' when fine, else why the landmarker could not load
+        self.on_obs = None          # called with every Observation (the server points it at controller.feed)
+        self._thread = None; self._lm = None; self._ts = 0
+        self._err_t = 0.0; self._errs = 0
+
+    def available(self):
+        # find_spec, not import: this runs on the server's event loop and mediapipe takes ~0.5 s to import
+        if importlib.util.find_spec("mediapipe") is None:
+            return False, "mediapipe is not installed (pip install mediapipe)"
+        return True, ""
+
+    def start(self):
+        self.error = ""             # a failed load gets another try
+        self.running = True
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(target=self._loop, daemon=True); self._thread.start()
+
+    def stop(self):
+        self.running = False; self.latest = None
+
+    def _fail(self, msg):
+        self._errs += 1
+        if time.time() - self._err_t > ERR_EVERY_S:
+            self.log(msg + (f" ({self._errs}x)" if self._errs > 1 else ""), "err")
+            self._err_t = time.time(); self._errs = 0
+
+    def _download(self):
+        self.model.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.model.with_suffix(".part")
+        self.log(f"Downloading the hand model to {self.model} ...")
+        try:
+            with urllib.request.urlopen(MODEL_URL, timeout=30) as r, open(tmp, "wb") as f:
+                while True:
+                    b = r.read(1 << 16)
+                    if not b: break
+                    f.write(b)
+            os.replace(tmp, self.model)   # never leave a half-written model where the loader looks
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.log(f"Hand model downloaded ({self.model.stat().st_size // 1024} KB).", "ok")
+
+    def _load(self):
+        from mediapipe.tasks.python import BaseOptions, vision as mv
+        if not self.model.exists(): self._download()
+        opts = mv.HandLandmarkerOptions(base_options=BaseOptions(model_asset_path=str(self.model)),
+                                        running_mode=mv.RunningMode.VIDEO, num_hands=2)
+        self._lm = mv.HandLandmarker.create_from_options(opts)
+        self.log("Hand tracker ready.", "ok")
+
+    def _loop(self):
+        last = None
+        while True:
+            if not self.running or self.error:
+                if self.latest is not None: self.latest = None
+                time.sleep(0.1); continue
+            if self._lm is None:
+                try:
+                    self.log("Loading the hand tracker (MediaPipe)...")
+                    self._load()
+                except Exception as e:
+                    self.error = f"hand tracker unavailable: {type(e).__name__}: {e}"
+                    self.log(self.error, "err")
+                continue
+            frame = self.v.frame
+            if frame is None or frame is last:      # the capture thread replaces it with a new array per frame
+                time.sleep(0.005); continue
+            last, t0 = frame, time.time()
+            try:
+                obs = self.process(frame, t0)
+            except Exception as e:
+                self._fail(f"hand tracker error: {type(e).__name__}: {e}")
+                obs = Observation(t0)
+            if not self.running: continue           # stopped mid-frame: publish nothing
+            self.latest = obs
+            if self.on_obs is not None:
+                try: self.on_obs(obs)
+                except Exception as e: self._fail(f"follow error: {type(e).__name__}: {e}")
+            time.sleep(max(0.0, 1.0 / TRACK_HZ - (time.time() - t0)))
+
+    def _detect(self, rgb):
+        import mediapipe as mp
+        # VIDEO mode tracks across frames and insists on strictly increasing timestamps
+        self._ts = max(self._ts + 1, int(time.monotonic() * 1000))
+        return self._lm.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), self._ts)
+
+    def process(self, frame, t):
+        """One frame -> Observation. Landmarks come back normalised, so they map straight to full res."""
+        h, w = frame.shape[:2]
+        small = cv2.resize(frame, (DETECT_W, round(h * DETECT_W / w)), interpolation=cv2.INTER_AREA) if w > DETECT_W else frame
+        res = self._detect(cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+        if not res.hand_landmarks: return Observation(t)
+        best = None
+        for lm, wl in zip(res.hand_landmarks, res.hand_world_landmarks):
+            ok, score = classify_pointing([(q.x, q.y, q.z) for q in wl])
+            key = (ok, score)                   # any pointing hand beats any non-pointing one
+            if best is None or key > best[0]: best = (key, lm)
+        (ok, score), lm = best
+        px = [(q.x * w, q.y * h) for q in lm]
+        o = Observation(t, hand=True, pointing=ok, score=score, tip_px=px[8], lm_px=px)
+        fz = float(self.v.s.get("follow_finger_z", 15.0))
+        tip = self.v.pixel_to_table(*px[8], z_off=fz)          # None without a camera pose
+        if tip is None: return o
+        o.x, o.y = tip
+        pip = self.v.pixel_to_table(*px[6], z_off=fz)
+        if pip is not None:
+            dx, dy = tip[0] - pip[0], tip[1] - pip[1]; n = math.hypot(dx, dy)
+            if n > 1e-6: o.dx, o.dy = dx / n, dy / n
+        return o

@@ -6,7 +6,7 @@ The classifier is fed synthetic hands posed from joint angles, so a case reads a
 straight, the rest curled" rather than 63 numbers. The controller is driven by a small
 simulator that interleaves 30 Hz camera frames with 50 Hz control steps on a fake clock.
 """
-import math, random, threading
+import math, random, threading, time, types
 import numpy as np
 
 import finger as F
@@ -350,6 +350,94 @@ def test_feed_and_step_from_two_threads():
     th.join()
     assert not errs, errs
     assert c.last_t == (n - 1) * 0.001
+
+
+# ------------------------------------------------- HandTracker (MediaPipe faked out)
+
+class FakeVision:
+    def __init__(self, pose=True):
+        self.frame = None; self.pose = pose; self.s = {"follow_finger_z": 15.0}; self.z = []
+    def pixel_to_table(self, u, v, raw=False, z_off=None):
+        self.z.append(z_off)
+        return (1000.0 - v * 0.5, u * 0.5) if self.pose else None     # any affine "camera" will do
+
+
+def fake_result(*hands):
+    """A HandLandmarkerResult-shaped object. Each hand is world landmarks; the image
+    landmarks are a made-up projection of them into the normalised frame."""
+    ns = lambda x, y, z: types.SimpleNamespace(x=x, y=y, z=z)
+    img = [[ns(0.5 + 3 * p[0], 0.5 - 3 * p[1], 0.0) for p in w] for w in hands]
+    return types.SimpleNamespace(hand_landmarks=img, hand_world_landmarks=[[ns(*p) for p in w] for w in hands])
+
+
+def tracker(result, pose=True):
+    v = FakeVision(pose); logs = []
+    tr = F.HandTracker(v, lambda m, l="info": logs.append((l, m)), ".")
+    seen = []
+    tr._detect = lambda rgb: (seen.append(rgb.shape), result)[1]
+    return tr, v, logs, seen
+
+
+def test_tracker_reports_no_hand():
+    tr, *_ = tracker(fake_result())
+    o = tr.process(np.zeros((1080, 1920, 3), np.uint8), 5.0)
+    assert o.t == 5.0 and not o.hand and not o.pointing and o.x is None and o.lm_px is None
+
+
+def test_tracker_prefers_the_pointing_hand_and_maps_to_full_res():
+    palm = hand(middle=STRAIGHT, ring=STRAIGHT, pinky=STRAIGHT)
+    point = hand()
+    tr, v, _, seen = tracker(fake_result(palm, point))
+    o = tr.process(np.zeros((1080, 1920, 3), np.uint8), 1.0)
+    assert seen == [(360, 640, 3)]                         # ran on the 640-wide copy
+    assert o.hand and o.pointing and o.score > 0.5
+    u, w = (0.5 + 3 * point[8][0]) * 1920, (0.5 - 3 * point[8][1]) * 1080
+    assert len(o.lm_px) == 21 and np.allclose(o.tip_px, (u, w))
+    assert v.z == [15.0, 15.0]                             # tip and PIP, raycast at the finger height setting
+    assert np.allclose((o.x, o.y), v.pixel_to_table(u, w))
+    # PIP -> TIP through the same fake camera, as a unit vector
+    pu, pw = (0.5 + 3 * point[6][0]) * 1920, (0.5 - 3 * point[6][1]) * 1080
+    d = np.subtract(v.pixel_to_table(u, w), v.pixel_to_table(pu, pw)); d /= np.linalg.norm(d)
+    assert np.allclose((o.dx, o.dy), d) and abs(math.hypot(o.dx, o.dy) - 1) < 1e-9
+
+
+def test_tracker_falls_back_to_the_best_hand_when_none_point():
+    tr, *_ = tracker(fake_result(hand(index=CURLED), hand(middle=STRAIGHT, ring=STRAIGHT, pinky=STRAIGHT)))
+    o = tr.process(np.zeros((480, 640, 3), np.uint8), 1.0)
+    assert o.hand and not o.pointing and o.lm_px is not None
+
+
+def test_tracker_without_a_pose_still_reports_pixels():
+    tr, *_ = tracker(fake_result(hand()), pose=False)
+    o = tr.process(np.zeros((1080, 1920, 3), np.uint8), 1.0)
+    assert o.pointing and o.tip_px is not None and o.x is None and o.dx is None
+
+
+def test_tracker_thread_survives_errors_and_stops_cleanly():
+    tr, v, logs, _ = tracker(None)
+    def boom(rgb): raise RuntimeError("bad frame")
+    tr._detect = boom; tr._lm = object()                   # pretend the model loaded
+    got = []; tr.on_obs = got.append
+    tr.start()
+    for _ in range(10):
+        v.frame = np.zeros((120, 160, 3), np.uint8); time.sleep(0.04)
+    assert tr._thread.is_alive() and got and not any(o.hand for o in got)
+    assert len([m for l, m in logs if l == "err"]) == 1    # throttled
+    tr.stop(); time.sleep(0.25); n = len(got)
+    v.frame = np.zeros((120, 160, 3), np.uint8); time.sleep(0.15)
+    assert tr.latest is None and len(got) == n
+
+
+def test_tracker_load_failure_sets_error_instead_of_raising():
+    tr, v, logs, _ = tracker(None)
+    def nope(): raise FileNotFoundError("no model")
+    tr._load = nope
+    tr.start(); v.frame = np.zeros((120, 160, 3), np.uint8)
+    for _ in range(50):
+        if tr.error: break
+        time.sleep(0.01)
+    assert "no model" in tr.error and tr._thread.is_alive()
+    tr.stop()
 
 
 # ------------------------------------------------------------------------------- runner

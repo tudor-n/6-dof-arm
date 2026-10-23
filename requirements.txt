@@ -9,3 +9,7 @@ numpy
 # Object detection in the Camera tab. Optional: server.py runs with --no-camera, and the
 # camera itself works without this - only the Detect checkbox needs it.
 ultralytics
+
+# Finger follow (Camera tab -> Follow finger). Optional: only that toggle needs it, and its
+# hand model downloads into weights/ the first time follow is switched on.
+mediapipe
