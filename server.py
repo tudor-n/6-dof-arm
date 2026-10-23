@@ -287,8 +287,13 @@ class S:
     clients = set(); port = None
     engaged = False; unlock = False; creep = None
     pick_task = None
+    # finger follow: target is the (x, y, z) last written, pitch is fixed for the session
+    follow = False; follow_status = ''; follow_state = 'idle'; follow_target = None
+    follow_clamped = False; follow_pitch = None; follow_last_write = 0.0; follow_pending = False
+    follow_kind = ''   # the server's own condition inside a state: '', 'paused', 'reach', 'clamped'
 
 V = None   # Vision instance (or None when the camera is off)
+FC = HT = None   # finger.FollowController / HandTracker: made on the first follow-on, kept after
 
 # Automatically sort hi/lo bounds to tolerate inverted calibration
 def clamp(v, lo, hi):
@@ -390,6 +395,7 @@ def start_pick(x, y, closing):
             "missed by centimetres - fix the pose first.", "err")
         return
     if S.pick_task and not S.pick_task.done(): log("A pick is already running (press STOP to cancel).", "warn"); return
+    follow_off("a pick started")
     S.pick_task = asyncio.create_task(pick_seq(x, y, closing))
 
 async def pick_seq(x, y, closing):
@@ -430,6 +436,104 @@ async def pick_seq(x, y, closing):
         # brake it, which also gives the release a fixed 1 s of opening.
         if drove: S.tgt[5] = S.cur[5] = 90.0
 
+# ---------------- finger follow ----------------
+# Messages that mean a person has taken the arm over. Checked once at the top of handle(), so a
+# new manual control only has to be added here to be safe against a follow fighting it.
+FOLLOW_BREAKERS = frozenset(("stop", "home", "rest", "target", "tip", "planar", "joints", "pitch", "jog",
+                             "goto_click", "pick_click", "pick_detected", "nudge", "raw", "jointpos"))
+
+def follow_on():
+    global FC, HT
+    if S.follow: return
+    def no(why): log(f"Follow refused: {why}", "err")
+    if V is None: return no("vision is not running (camera files missing, --no-camera, or OpenCV not installed)")
+    ok, why = V.pose_health()
+    if not ok: return no(f"{why}. The arm would hover over the wrong spot - fix the pose first")
+    if not S.live: return no("Live is OFF, the arm would not move")
+    if S.pick_task and not S.pick_task.done(): return no("a pick is running (press STOP to cancel it)")
+    try:
+        # lazily: finger.py pulls in MediaPipe, which the rest of the server must not need
+        from finger import FollowController, HandTracker
+        if FC is None: FC = FollowController()
+        if HT is None: HT = HandTracker(V, log, HERE)
+    except Exception as e:
+        return no(f"finger tracking could not load ({type(e).__name__}: {e})")
+    ok, why = HT.available()
+    if not ok: return no(why)
+    FC.reset(); HT.on_obs = FC.feed
+    try: HT.start()
+    except Exception as e: return no(f"the hand tracker did not start ({e})")
+    # Fixed for the session so the wrist does not wave around as the finger moves.
+    fp = V.s.get("follow_pitch")
+    S.follow_pitch = fk(S.tgt, S.cfg)[1] if fp is None else float(fp)
+    S.follow, S.follow_state, S.follow_status = True, 'idle', 'show a pointing finger'
+    S.follow_target, S.follow_clamped, S.follow_last_write, S.follow_pending = None, False, 0.0, False
+    S.follow_kind = ''
+    log(f"Follow ON: point at the table. Tool pitch {S.follow_pitch:.0f}, hover "
+        f"{max(60.0, float(V.s.get('follow_hover', 110.0))):.0f} mm above the table", "ok")
+
+def follow_off(why, lvl="warn"):
+    """The one way out of follow, for the toggle and every interlock. The arm keeps the
+    last target it was given, so it settles and holds rather than snapping anywhere."""
+    if not S.follow: return
+    S.follow = False
+    try:
+        if HT is not None: HT.stop()
+    except Exception as e: print("hand tracker stop:", e)
+    if FC is not None: FC.reset()
+    S.follow_state, S.follow_status, S.follow_target, S.follow_clamped = 'idle', '', None, False
+    S.follow_pending, S.follow_kind = False, ''
+    if V is not None: V.follow_overlay = None
+    log(f"Follow OFF: {why}", lvl)
+
+def follow_note(state, status, kind=""):
+    """Set the follow state for the UI; log only on a transition, never per tick. Going in and
+    out of the reach limit is not logged: a finger held at the edge would flap it."""
+    loud = lambda k: k if k in ("paused", "reach") else ""
+    if (state, loud(kind)) != (S.follow_state, loud(S.follow_kind)):
+        log(f"follow: {status}", "warn" if kind in ("paused", "reach") else "info")
+    S.follow_state, S.follow_status, S.follow_kind = state, status, kind
+
+def follow_tick(now):
+    """One control-loop tick of follow. Cheap unless a write is due: reachable_target only
+    runs then, at most every 50 ms, and only for a changed (or still unwritten) target."""
+    if HT.error: return follow_off(f"hand tracker failed: {HT.error}")
+    if not S.live: return follow_off("Live is off" + (" (serial link lost)" if S.ser is None and S.port else ""))
+    ok, _ = V.pose_health()
+    if not ok:
+        # Hold, don't write: the finger's table position comes from the very pose that is bad.
+        # Whatever the controller wants is rewritten once the pose is back.
+        S.follow_pending = True
+        follow_note('holding', 'paused: camera pose unhealthy', 'paused')
+    else:
+        FC.p.lead_mm = float(V.s.get("follow_lead", 30.0))
+        FC.p.deadband_mm = float(V.s.get("follow_deadband", 3.0))
+        out = FC.step(now)
+        if out.changed: S.follow_pending = True
+        if out.target is None: kind = ""
+        elif S.follow_pending and S.follow_kind == "reach": kind = "reach"   # still waiting to be reachable
+        else: kind = "clamped" if S.follow_clamped else ""
+        if out.target is not None and S.follow_pending and now - S.follow_last_write >= 0.05:
+            x, y = out.target
+            # never anything derived from the finger: a fixed hover, so the arm cannot come down into the hand
+            z = V.table_z(x, y) + max(60.0, float(V.s.get("follow_hover", 110.0)))
+            r = reachable_target(x, y, z, S.follow_pitch, S.cfg, S.tgt[4])
+            S.follow_last_write = now     # also paces the retries of an unreachable target
+            if r is None: kind = "reach"
+            else:
+                rx, ry, rz, S.follow_clamped = r
+                servo, S.reach, S.limited = ik(rx, ry, rz, S.follow_pitch, S.cfg, S.tgt[4])
+                S.tgt[:4] = servo          # never roll or gripper
+                S.follow_target = (rx, ry, rz); S.follow_pending = False
+                kind = "clamped" if S.follow_clamped else ""
+        follow_note(out.state, "out of reach" if kind == "reach" else
+                    out.status + (" (at the reach limit)" if kind == "clamped" else ""), kind)
+    ob = HT.latest      # the overlay: only a recent observation, a stale hand would mislead
+    try: fresh = ob is not None and now - ob.t < 0.5
+    except Exception: fresh = False
+    V.follow_overlay = {"lm": ob.lm_px, "tip": ob.tip_px, "pointing": ob.pointing,
+                        "target": S.follow_target, "state": S.follow_state} if fresh else None
+
 def record_marker(mid):
     if V is None: return
     if not S.live: log("Turn Live ON, jog the tip onto the marker centre, then record.", "err"); return
@@ -468,6 +572,7 @@ def serial_send(angles):
         try: S.ser.close()
         except Exception: pass
         S.ser = None; S.live = False
+        follow_off("serial link lost")
 
 async def reconnect_loop():
     while True:
@@ -501,6 +606,9 @@ async def control_loop():
     while True:
         await asyncio.sleep(0.02)
         now = time.time(); dt = now - last; last = now
+        if S.follow:
+            try: follow_tick(now)
+            except Exception as e: follow_off(f"follow crashed: {type(e).__name__}: {e}")
         if S.creep:
             i, d, dl = S.creep
             if now > dl: S.creep = None
@@ -540,13 +648,17 @@ async def control_loop():
                              "pl_cur": fk_planar(S.cur, S.cfg), "pl_tgt": fk_planar(S.tgt, S.cfg),
                              "ang": joint_angles(S.tgt, S.cfg), "ranges": [[round(a), round(b)] for a, b in joint_ranges(S.cfg)], "tool": tool_state(),
                              "live": S.live, "speed": S.speed, "reach": S.reach, "limited": S.limited,
-                             "hw": S.ser is not None, "engaged": S.engaged, "lost": S.ser is None and S.port is not None}))
+                             "hw": S.ser is not None, "engaged": S.engaged, "lost": S.ser is None and S.port is not None,
+                             "follow": {"on": S.follow, "state": S.follow_state, "status": S.follow_status,
+                                        "target": S.follow_target, "clamped": S.follow_clamped}}))
         if tick % 10 == 0 and S.clients and V is not None:
             st = V.status(); st["busy"] = bool(S.pick_task and not S.pick_task.done())
             await broadcast(st)
 
 async def handle(ws, m):
     t = m.get("type")
+    if S.follow and (t in FOLLOW_BREAKERS or (t == "live" and not m.get("on"))):
+        follow_off("STOP" if t == "stop" else "Live turned off" if t == "live" else f"manual control took over ({t})")
     if t == "target":
         S.tool = {k: float(m[k]) for k in ("x", "y", "z", "pitch")}
         S.tool["x"] = max(0.0, S.tool["x"])
@@ -650,6 +762,9 @@ async def handle(ws, m):
         tip = tool_state()
         move_tip(tip["x"] + float(m.get("dx", 0)), tip["y"] + float(m.get("dy", 0)), tip["z"] + float(m.get("dz", 0)),
                  lock=True, who="jog")
+    elif t == "follow":
+        if m.get("on"): follow_on()
+        else: follow_off("switched off", "info")
     elif V is None and t in ("cam_click", "goto_click", "pick_click", "pick_detected", "vset", "detect", "pose_lock",
                              "marker_record", "marker_apply", "marker_reset", "marker_tape",
                              "roll_zero", "roll_flip", "jaws"):
@@ -716,7 +831,7 @@ async def handle(ws, m):
 
 def client_gone(c):
     S.clients.discard(c)
-    if not S.clients: S.unlock = False; S.creep = None; push_limits()
+    if not S.clients: S.unlock = False; S.creep = None; push_limits(); follow_off("no browser connected")
 
 async def ws_handler(req):
     ws = web.WebSocketResponse(); await ws.prepare(req); S.clients.add(ws)
