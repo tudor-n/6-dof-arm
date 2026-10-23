@@ -118,7 +118,11 @@ server.py  control_loop (50 Hz) ──┘
      then holds, with status `out of reach`.
   - Deliberately **not** `ik_auto`: its pitch sweep and shrink-toward-base would make the wrist
     flail as the finger moves.
-- **Follow pitch**: `follow_pitch` setting. `None` (the default) means the tool pitch at the
+- **Revised during implementation:** a fixed pitch turned out to reach only a band of the
+  table, because the wrist's travel is narrow. `reachable_target` now returns
+  `(x, y, z, pitch, clamped)`. It hits the point exactly at the workable pitch nearest the
+  preferred one, and only moves the point when no pitch in [-120, 30] reaches it.
+- **Follow pitch** (now the *preferred* pitch): `follow_pitch` setting. `None` (the default) means the tool pitch at the
   moment follow engages, fixed for the session, so the wrist doesn't wave around. A number sets
   a fixed pitch.
 - State: `S.follow` (bool), `S.follow_status` (str), `S.follow_last_write`.

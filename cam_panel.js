@@ -118,7 +118,7 @@
     ['drop_x', 'Drop X', 'mm'], ['drop_y', 'Drop Y', 'mm'], ['drop_z', 'Drop Z', 'mm']];
   var FOL = [['follow_hover', 'Hover height above table', 'mm, never below 60'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
     ['follow_lead', 'Aim ahead of the fingertip', 'mm'], ['follow_deadband', 'Deadband', 'mm, ignores hand tremor'],
-    ['follow_pitch', 'Follow tool pitch', 'blank = pitch at engage, ' + MINUS + '90 = down']];
+    ['follow_pitch', 'Follow tool pitch', 'preferred; blank = pitch at engage, ' + MINUS + '90 = down']];
   var BLANK = { pick_pitch: 1, follow_pitch: 1 };   // settings where blank means "keep the current pitch"
   var SUBS = [['back', A.LARR + ' Camera'], ['mk', 'Markers'], ['roll', 'Wrist roll'], ['set', 'Pick settings'], ['fol', 'Finger follow'], ['xyz', 'Go to XYZ'], ['log', 'Log & warnings']];
   var sh = '<div class="x br" style="left:0;top:0;width:260px;height:472px"><div class="x lb" style="left:20px;top:16px">Camera setup</div>';

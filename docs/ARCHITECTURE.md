@@ -140,13 +140,18 @@ about the arm never doing anything you didn't mean.
   the fingertip and hide it from the camera.
 
 **reachable_target() lives in server.py**, because arm geometry lives there. When you point
-beyond reach, it slides the target along the same azimuth, at fixed height and pitch, to the
-farthest point the arm can actually reach (a binary search on radius), and clamps the azimuth to
-the base's range. It deliberately isn't `ik_auto()`. Its pitch sweep and shrink-toward-base are
-right for a one-off GO, but with a target streaming in at 20 Hz they'd make the wrist flail. For
-the same reason the tool pitch is fixed for the whole session: the pitch at the moment follow
-engages, or `follow_pitch` if that's set. The control loop writes only the four arm joints, at
-most every 50 ms, and the existing speed-limited interpolator does the moving.
+somewhere, it first looks for a tool pitch that hits the point exactly, starting from the
+preferred one (the pitch at the moment follow engages, or `follow_pitch` if that's set) and
+moving outward a degree at a time, so the wrist turns no more than it has to. The wrist's travel
+is narrow enough that, at hover height, only about ten degrees of pitch reach any given spot.
+A pitch held fixed for the session would reach only a band of the table and park the tool
+centimetres from where you point. Only when no pitch reaches the point does it slide the target
+along the same azimuth, at fixed height, to the nearest point the arm can reach (scanned in 5 mm
+rings, then bisected). The azimuth is clamped to the base's range. It deliberately isn't
+`ik_auto()`: that one shrinks the target toward the base and lets the height wander, which is
+fine for a one-off GO but wrong when you asked for "as far as you can in that direction". The
+control loop writes only the four arm joints, at most every 50 ms, and the existing
+speed-limited interpolator does the moving.
 
 **The target height is fixed.** One camera has no depth: the fingertip pixel says which ray the
 finger is on, not how high it is. So the target Z is `table_z + follow_hover` (never under

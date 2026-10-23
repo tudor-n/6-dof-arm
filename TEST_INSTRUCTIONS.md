@@ -247,7 +247,7 @@ The other settings on that page:
 | Hover height above table | 110 mm | How high the arm hovers. Never below 60 |
 | Aim ahead of the fingertip | 30 mm | How far in front of your fingertip it aims |
 | Deadband | 3 mm | Hand movement smaller than this is ignored. Raise it if the arm buzzes |
-| Follow tool pitch | blank | Blank keeps the wrist angle it had when follow started |
+| Follow tool pitch | blank | The wrist angle follow prefers. Blank = the angle it had when follow started. It tilts away from this only as far as it must to reach where you point |
 
 Worth noting if something goes wrong: the status line text, the button colour, and whether the
 hand outline on the video was there at the time.
