@@ -1171,6 +1171,51 @@ def test_roll_overlay_matches_the_command():
     with_roll(go)
 
 
+# ------------------------------------------------------------------------- pick gripper
+
+def run_pick(reachable=True, crash_at=None):
+    """Run pick_seq with no arm, camera or waiting. Returns (gripper target after, gripper history)."""
+    import asyncio, copy, types
+    seen = []
+    def move_tip(x, y, z, pitch=None, who="tip", strict=False, **kw):
+        seen.append((who, S.S.tgt[5]))
+        if who == crash_at: raise RuntimeError("boom")
+        return reachable or who != "descend"
+    async def arrived(*a, **kw): return True
+    async def nap(t): seen.append(("sleep", S.S.tgt[5]))
+    s = copy.deepcopy(V.DEFAULT_SETTINGS); s.update(grip_open=130.0, grip_close=50.0)
+    saved = (S.V, S.move_tip, S.wait_arrived, S.asyncio.sleep, S.S.live, list(S.S.tgt), list(S.S.cur))
+    S.V = types.SimpleNamespace(s=s, table_z=lambda x, y: 5.0, roll={"zero": 90.0, "sign": 1})
+    S.move_tip, S.wait_arrived, S.asyncio.sleep = move_tip, arrived, nap
+    S.S.live = True; S.S.tgt[5] = S.S.cur[5] = 90.0
+    try:
+        asyncio.run(S.pick_seq(200.0, 0.0, None))
+        return S.S.tgt[5], seen
+    finally:
+        S.V, S.move_tip, S.wait_arrived, S.asyncio.sleep, S.S.live, S.S.tgt, S.S.cur = saved
+
+
+def test_pick_brakes_the_gripper_after_the_release():
+    grip, seen = run_pick()
+    assert seen[-1] == ("sleep", 130.0), f"the release should open for a while first: {seen}"
+    assert grip == 90.0, f"gripper left driving at {grip} after the pick finished"
+
+
+def test_pick_still_holds_closed_while_carrying():
+    _, seen = run_pick()
+    assert dict(seen)["drop"] == 50.0, f"the object must stay gripped on the way to the drop: {seen}"
+
+
+def test_aborted_pick_brakes_the_gripper():
+    grip, _ = run_pick(reachable=False)
+    assert grip == 90.0, f"gripper left driving at {grip} after an aborted pick"
+
+
+def test_crashed_pick_brakes_the_gripper():
+    grip, _ = run_pick(crash_at="lift")
+    assert grip == 90.0, f"gripper left driving at {grip} after a crashed pick"
+
+
 # ------------------------------------------------------------------------- camera choice
 
 def fake_sysfs(cams):
