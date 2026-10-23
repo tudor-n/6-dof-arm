@@ -41,6 +41,7 @@ class Observation:
     dy: float = None
     tip_px: tuple = None        # fingertip, full-res undistorted pixels
     lm_px: list = None          # all 21 landmarks in pixels, for the overlay
+    lag: float = 0.0            # seconds from t (frame picked up) until the observation was ready
 
 
 def _angle(a, b, c):
@@ -151,8 +152,13 @@ class FollowController:
         self.lock = threading.Lock()
         self.reset()
 
-    def reset(self):
+    def reset(self, now=None):
+        """Back to idle. With now, frames picked up before it are dropped: the tracker may be
+        mid-detection on a frame from before the reset (a quick off/on, a pose that just went
+        bad) and that frame must not seed the fresh session."""
         with self.lock:
+            self.since = now
+            self.lag = 0.0              # smoothed detection latency, see step()
             self.state = "idle"
             self.target = None          # what the arm is told; None until first engaged
             self.prev_out = None        # target as of the previous step, for FollowOut.changed
@@ -178,7 +184,9 @@ class FollowController:
     def feed(self, obs):
         with self.lock:
             if obs is None or (self.last_t is not None and obs.t <= self.last_t): return
+            if self.since is not None and obs.t < self.since: return
             self.last_t = obs.t
+            self.lag += 0.3 * (min(max(float(obs.lag or 0.0), 0.0), 0.5) - self.lag)
             if obs.hand: self.last_hand_t = obs.t
             good = obs.pointing and obs.x is not None and obs.y is not None
             if not good:
@@ -220,7 +228,11 @@ class FollowController:
     def step(self, now):
         with self.lock:
             p = self.p
-            if self.state in ("arming", "tracking") and (self.good_t is None or now - self.good_t > p.lost_s):
+            # t is when the frame was picked up, so by the time it arrives it is already `lag`
+            # old: a slow detector (70 ms a frame) would otherwise look like a lost finger
+            # between every pair of frames and never get past arming.
+            lost = p.lost_s + self.lag
+            if self.state in ("arming", "tracking") and (self.good_t is None or now - self.good_t > lost):
                 if self.state == "tracking" and self.hist:
                     # Curling the finger moves the fingertip before the classifier notices, so
                     # the last good frames are already dragged. Go back to before that started.
@@ -236,7 +248,7 @@ class FollowController:
             changed = self.target != self.prev_out
             self.prev_out = self.target
             if self.state == "holding":
-                seen = self.last_hand_t is not None and now - self.last_hand_t <= p.lost_s
+                seen = self.last_hand_t is not None and now - self.last_hand_t <= lost
                 status = "holding: not pointing" if seen else "holding: finger lost"
             else:
                 status = {"idle": "show a pointing finger", "arming": "arming", "tracking": "tracking"}[self.state]
@@ -328,6 +340,7 @@ class HandTracker:
                 self._fail(f"hand tracker error: {type(e).__name__}: {e}")
                 obs = Observation(t0)
             if not self.running: continue           # stopped mid-frame: publish nothing
+            obs.lag = time.time() - t0
             self.latest = obs
             if self.on_obs is not None:
                 try: self.on_obs(obs)

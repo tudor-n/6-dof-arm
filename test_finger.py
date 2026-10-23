@@ -333,6 +333,29 @@ def test_duplicate_and_stale_frames_are_ignored():
     assert len(c.hist) == 1
 
 
+def test_a_slow_detector_still_tracks():
+    """Each frame is picked up at t but only arrives `lag` later. At 70 or 100 ms a frame, the
+    newest frame step() can see is up to twice that old, past lost_s, so timing out on t alone
+    never got past arming (found in review)."""
+    for lag in (0.07, 0.1):
+        def late(t, lag=lag):
+            o = ob(t - lag); o.lag = lag; return o
+        outs = sim(F.FollowController(), lag, 2.0, late, fps=1.0 / lag)
+        states = [o.state for _, o in outs if _ > 0.8]
+        assert states and all(st == "tracking" for st in states), f"lag {lag}: {sorted(set(states))}"
+
+
+def test_reset_drops_frames_picked_up_before_it():
+    """A quick off/on: the tracker can deliver a frame it picked up before the reset, and that
+    frame must not seed the new session with where the finger used to be."""
+    c, _ = tracking_at(x=100.0)
+    c.reset(now=2.0)
+    c.feed(ob(1.99, x=300.0))
+    assert c.pos is None and c.state == "idle", "a pre-reset frame got in"
+    outs = sim(c, 2.0, 3.0, lambda t: ob(t, x=150.0, d=(1.0, 0.0)))
+    assert near(outs[-1][1].target, (150.0 + c.p.lead_mm, 0.0), 1.0)
+
+
 def test_feed_and_step_from_two_threads():
     c = F.FollowController(); errs = []; n = 3000
     def feeder():
