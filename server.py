@@ -341,7 +341,7 @@ def start_pick(x, y, closing):
     S.pick_task = asyncio.create_task(pick_seq(x, y, closing))
 
 async def pick_seq(x, y, closing):
-    s = V.s
+    s = V.s; drove = False
     try:
         if not S.live: log("Pick refused: Live is OFF, the arm would not move.", "err"); return
         tz = V.table_z(x, y)
@@ -352,7 +352,7 @@ async def pick_seq(x, y, closing):
                 f"{s['z_floor']:.1f}, so the tip goes to {grasp:.1f} instead. While this keeps firing, "
                 f"z_grasp_offset has NO EFFECT - z_floor is setting the grasp depth on its own, and "
                 f"adjusting z_grasp_offset will change nothing. Lower z_floor to hand control back.", "warn")
-        S.tgt[5] = clamp(s["grip_open"], 0, 180)
+        S.tgt[5] = clamp(s["grip_open"], 0, 180); drove = True
         if closing is not None:
             az = math.degrees(math.atan2(y, x)); r = world_to_servo_roll(closing, az); S.tgt[4] = r
             log(f"roll: jaws should close along {closing:.0f} deg (table), arm azimuth {az:.0f} deg -> roll servo {r:.0f}")
@@ -372,6 +372,11 @@ async def pick_seq(x, y, closing):
         log("pick cancelled", "warn"); raise
     except Exception as e:
         log(f"pick crashed: {e}", "err")
+    finally:
+        # The 360 gripper has no end position: left at grip_open it drives into its stop and
+        # stalls until STOP (see HARDWARE.md, the dead-man's switch). However the pick ends,
+        # brake it, which also gives the release a fixed 1 s of opening.
+        if drove: S.tgt[5] = S.cur[5] = 90.0
 
 def record_marker(mid):
     if V is None: return
