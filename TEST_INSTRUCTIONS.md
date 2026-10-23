@@ -201,7 +201,7 @@ Keep a hand near STOP the whole time. **Esc** works too.
 
 1. Start the server with the arm and camera as in section 3. Check the pose chip says
    **POSE OK**. Turn **Live** on and set the speed to **20** (the lowest).
-2. On the Camera tab, tap **Follow finger** (or press **F** on a keyboard). The button turns
+2. On the Camera tab, tap **Follow finger** (or press **F** on a keyboard; F turns follow on only from the Camera tab, but off from anywhere). The button turns
    white and the line under it says `FOLLOW: show a pointing finger`. Nothing moves yet.
    - If it stays off, open the log: it's refused when Live is off, the pose isn't healthy, a
      pick is running or MediaPipe isn't installed.
@@ -244,7 +244,7 @@ The other settings on that page:
 
 | Setting | Default | What it does |
 |---|---|---|
-| Hover height above table | 110 mm | How high the arm hovers. Never below 60 |
+| Hover height above table | 110 mm | How high the arm hovers. Kept between 60 and 200 |
 | Aim ahead of the fingertip | 30 mm | How far in front of your fingertip it aims |
 | Deadband | 3 mm | Hand movement smaller than this is ignored. Raise it if the arm buzzes |
 | Follow tool pitch | blank | The wrist angle follow prefers. Blank = the angle it had when follow started. It tilts away from this only as far as it must to reach where you point |

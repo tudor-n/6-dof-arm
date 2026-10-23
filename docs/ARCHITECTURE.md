@@ -154,8 +154,8 @@ control loop writes only the four arm joints, at most every 50 ms, and the exist
 speed-limited interpolator does the moving.
 
 **The target height is fixed.** One camera has no depth: the fingertip pixel says which ray the
-finger is on, not how high it is. So the target Z is `table_z + follow_hover` (never under
-60 mm) and is never derived from the finger. That limitation buys a safety property for free:
+finger is on, not how high it is. So the target Z is `table_z + follow_hover` (kept
+within 60-200 mm) and is never derived from the finger. That limitation buys a safety property for free:
 the arm hovers *over* the work, and can never follow a finger down into the hand.
 
 **The parallax caveat.** To turn the ray into a table point, the tracker intersects it with a
@@ -169,10 +169,15 @@ apparent hand size would fix it properly, and is left for later.
 
 **Interlocks.** Follow is the arm acting on its own, so it gives way to anything you do.
 Switching it on is refused unless Live is on, the pose is healthy, no pick is running and
-MediaPipe is available. Any manual command turns it off: STOP or Esc, HOME, REST, a drag, a jog,
-GO, a pitch change, tap-to-go or a pick. So do Live going off, losing the serial port, and the
-last browser disconnecting. An unhealthy pose while tracking only pauses it, because a pose
-glitch is usually brief. Losing the hand holds the arm where it is; it never goes looking. The
+MediaPipe is available. Every message turns it off except a short allowlist that cannot fight
+it (speed, gripper, wrist roll, settings, detect, and Live or unlock being switched *off*). So
+STOP or Esc, HOME, REST, a drag, a jog, GO, a pick, Relax, creep and every calibration control
+end it. It's an allowlist because a list of the dangerous ones goes stale silently: Relax was
+missing from the first one, and the next finger move would have woken a limp servo under the
+operator's hand. Live going off, losing the serial port and the last browser disconnecting also
+end it. An unhealthy pose while tracking only pauses it, because a pose glitch is usually brief.
+While paused the controller is reset every tick, so nothing seen through the bad pose survives
+it, and the finger has to arm again afterwards. Losing the hand holds the arm where it is; it never goes looking. The
 gripper and wrist roll are never touched. All of this lives in the server, and the UI only
 reflects `state.follow`, so two tablets can't disagree about whether follow is on.
 

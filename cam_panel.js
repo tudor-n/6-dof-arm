@@ -116,7 +116,7 @@
     ['z_grasp_offset', 'Grasp z = table z + this', 'mm'], ['z_floor', 'Lowest allowed tip z', 'mm'],
     ['pick_pitch', 'Pick tool pitch', 'blank = keep current, ' + MINUS + '90 = straight down'], ['grip_open', 'Gripper open value', ''], ['grip_close', 'Gripper close value', ''],
     ['drop_x', 'Drop X', 'mm'], ['drop_y', 'Drop Y', 'mm'], ['drop_z', 'Drop Z', 'mm']];
-  var FOL = [['follow_hover', 'Hover height above table', 'mm, never below 60'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
+  var FOL = [['follow_hover', 'Hover height above table', 'mm, kept within 60-200'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
     ['follow_lead', 'Aim ahead of the fingertip', 'mm'], ['follow_deadband', 'Deadband', 'mm, ignores hand tremor'],
     ['follow_pitch', 'Follow tool pitch', 'preferred; blank = pitch at engage, ' + MINUS + '90 = down']];
   var BLANK = { pick_pitch: 1, follow_pitch: 1 };   // settings where blank means "keep the current pitch"
@@ -262,11 +262,13 @@
   function followOn() { return !!(S && S.follow && S.follow.on); }
   function toggleFollow() { send({ type: 'follow', on: !followOn() }); }
   act('follow', { tap: toggleFollow });
-  // F toggles follow on a keyboard, unless something is being typed (the detect keyboard or the number pad has the keys)
+  // F toggles follow on a keyboard, unless something is being typed (the detect keyboard or the number pad has the keys).
+  // It can switch follow OFF from any tab, but ON only from the Camera tab, where the button and status show what it is doing.
   document.addEventListener('keydown', function (e) {
     if (e.keyCode != 70 || e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
     if (KB.open || A.pad.id) return;
     var tn = e.target && e.target.tagName; if (tn == 'INPUT' || tn == 'TEXTAREA' || tn == 'SELECT') return;
+    if (!followOn() && (A.tab() != 'cam' || sub)) return;
     toggleFollow(); e.preventDefault();
   });
   var jogOpen = false;
