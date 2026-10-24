@@ -20,6 +20,10 @@ from a web page: from the laptop, or from an old Galaxy Tab propped up next to i
 - **Point with your finger:** with **Follow finger** on, the tool hovers over the spot your index
   finger points at, and follows it around the table. Curl the finger and it stays put. **Low / Hover / High**
   pick the hover height.
+- **Talk to it:** in the Voice tab, switch on **Wake word** and say *"Dummy, come here"* (follow
+  your finger), *"Dummy, start pose"*, *"Dummy, relax"* (fold to rest, then go limp) or *"Dummy,
+  stop"*. **Push to talk** (hold the button, or V on a keyboard) is there for testing. A two-minute
+  calibration on the same tab tunes it to your mic, your room and your voice.
 - **Calibrate it properly:** a guided wizard takes each joint in turn (about ten minutes), so the
   maths matches the real servos to within millimetres.
 
@@ -90,11 +94,12 @@ python server.py --no-camera           # no camera; arm only
 python server.py --camera 1 --http 8080
 python test_geometry.py                # offline maths tests, no hardware needed
 python test_finger.py                  # offline finger-follow tests
+python test_voice.py                   # offline voice tests
 ```
 
-`ultralytics` (Detect) and `mediapipe` (Follow finger) are optional: without them the rest of
-the camera tab still works. Follow downloads its hand model into `weights/` the first time you
-switch it on.
+`ultralytics` (Detect), `mediapipe` (Follow finger) and `faster-whisper` (Voice) are optional:
+without them the rest of the UI still works. Follow downloads its hand model into `weights/` the
+first time you switch it on, and Voice its speech model (~0.5 GB, into the Hugging Face cache).
 
 The arm boots limp and stays limp. Nothing moves until you turn **Live** on, which sends
 `R 0` to engage the servos. **STOP** (or Esc) cancels any running pick and brakes the
@@ -108,6 +113,9 @@ gripper.
 | `vision.py` | Camera thread, ArUco pose, table raycast, YOLO-World detection, MJPEG overlay |
 | `finger.py` | Finger follow: MediaPipe hand tracking and the follow state machine. Knows nothing about the arm |
 | `cam_panel.js` | Camera tab, injected into `index.html` by the server at serve time |
+| `hearing.py` | Voice: mic, speech detection, Whisper, and turning what was said into a command. Knows nothing about the arm |
+| `voice_panel.js` | Voice tab, injected like the Camera tab |
+| `voice.json` | Voice settings and what calibration learned about your voice |
 | `index.html` | Move and Calibrate tabs; the canvas arm views and the calibration wizard |
 | `src/main.c` | ESP32 firmware. A deliberately dumb executor - see HARDWARE.md |
 | `config.json` | Link lengths, joint zero/sign/limits, tool offsets |
@@ -117,6 +125,7 @@ gripper.
 | `test_markers.py` | Pre-flight: are all four ArUco markers visible? |
 | `test_geometry.py` | Offline tests for the pose and kinematics maths |
 | `test_finger.py` | Offline tests for pointing detection and the follow state machine |
+| `test_voice.py` | Offline tests for the voice matcher, segmenter and calibration |
 | `desktop/` | DUMMY, the desktop app: a Tauri window around the UI, and the launcher that installs and updates it |
 | `docs/brand/` | The DUMMY logo: marks and launcher tiles (dark and light) |
 
@@ -134,6 +143,7 @@ the table reasonably reliably.
 | Tool model | Along-axis length fitted; off-axis offsets unmeasured |
 | Finger follow | Works on the real arm (2026-10-24). The Low / Hover / High buttons are new and not yet tried on hardware |
 | Desktop app | DUMMY in the launcher, self-updating from master (2026-10-24). Not yet tried with the arm plugged in |
+| Voice | New. Tested with synthetic speech (340 clips, no wrong actions) and the webcam mic, not yet with a person talking to the arm |
 
 The remaining errors are millimetres rather than centimetres. Getting from "works most of the
 time" to "works every time" is what [docs/ROADMAP.md](docs/ROADMAP.md) tracks - it also records

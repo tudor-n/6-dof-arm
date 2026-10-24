@@ -262,6 +262,105 @@ hand outline on the video was there at the time.
 
 ---
 
+## 6. Voice (branch `feat/voice`)
+
+The Voice tab: say **"Dummy, come here"** (finger follow on), **"Dummy, start pose"**,
+**"Dummy, relax"** (fold to the rest pose, then go limp) or **"Dummy, stop"**. Commands for these
+steps are for the Linux laptop (`~/dev/RobotArmControl`), where voice records through PipeWire.
+
+### 6a. Install and offline checks (no hardware)
+
+```
+cd ~/dev/RobotArmControl
+.venv/bin/pip install -r requirements.txt     # adds faster-whisper and cuBLAS 12: about 1 GB, once
+.venv/bin/python test_voice.py
+```
+
+Expect `26/26 passed`. Then a dry run with no arm and no camera:
+
+```
+.venv/bin/python server.py --sim --no-camera --http 8099
+```
+
+Open <http://localhost:8099> and go to the **Voice** tab.
+
+1. Tap **Push to talk**. The chip says **LOADING** and the line at the bottom says
+   `downloading small.en (first time only)` (about 0.5 GB, so the first time needs internet),
+   then **READY**, with `small.en on the GPU`. If it says CPU, it works, but slower (about 0.7 s
+   per phrase instead of 0.07): check `nvidia-smi` works and that `nvidia-cublas-cu12` installed.
+2. Talk normally: the level bar should jump. Hold **Hold to talk** (or **V** on the keyboard) and
+   say "start pose". The Heard list shows `"Start pose."` and `START POSE → refused: Live is off`.
+   That's correct: with Live off a move is refused, not saved for later.
+3. Turn **Live** on (it's simulated here) and say it again: `going to the start pose`.
+4. Tap ▶ on a line to hear what the mic actually heard.
+
+### 6b. Calibrate (2 minutes, once per room / mic)
+
+Voice tab → **Calibrate**:
+1. **Mic check**: talk from where you stand at the arm. Green ("Good") is 20 dB or more above the
+   room. If it says too quiet, pick another mic (**Choose microphone**) or bring it closer. The
+   default is whatever input is selected in the system sound settings (on this laptop, the webcam's
+   mic).
+2. **Quiet room**: press Start, stay quiet for 8 s, and if you can, jog the arm meanwhile so servo
+   noise is part of the measurement. Expect `0 false starts`.
+3. **Your voice**: press Start and say each phrase when it shows. Two takes each, 8 in all. If a take
+   fails it says why. Where Whisper hears you a little differently it learns that, and Settings
+   lists what it learned (each with ✕ to forget it).
+
+Then tap **Use wake word**.
+
+### 6c. On the arm
+
+Keep a hand near STOP the whole time. Start the server with the arm and camera as in section 3
+(or open the desktop app), check **POSE OK**, turn **Live** on and set the speed to **20**.
+
+1. Voice tab: **Wake word**. The chip says **LISTENING**, and the tab's label gets a green dot,
+   which shows on every tab.
+2. Say **"Dummy, start pose"**. Expect a short rising beep, the arm going to the start pose, and a
+   green line in Heard.
+3. Say **"Dummy, come here"**: follow switches on (Camera tab, the Follow finger button). Point,
+   and the arm follows as in section 5. Then say **"Dummy, stop"**: follow switches off and the arm
+   holds.
+4. Say **"Dummy, relax"**. The arm **folds to the rest pose first, then goes limp**. The first time,
+   keep a hand under the arm anyway.
+   - Say it again, and while it's folding press **STOP** (or drag a handle). It should stop folding
+     and stay **engaged**, and the log says `relax cancelled`.
+5. Say just **"Dummy"**, wait a second, then **"start pose"**. After the name it beeps and the chip
+   says **SAY IT** for 5 s, so the command doesn't need the name again.
+6. Talk normally near it for a minute: a phone call, reading something aloud, "the dummy variable
+   is wrong". Nothing should move. The Heard list shows each thing as `no "Dummy" first: ignored` or
+   `not a command`.
+7. **Dry run** on: commands show `dry run, not acted on` and nothing moves, except **"Dummy, stop"**,
+   which always works. Turn dry run off again.
+8. Close every UI page and say "Dummy, start pose": nothing moves, because commands need a page
+   open somewhere (the presence check). "Dummy, stop" still works.
+9. Say "Dummy, relax", and while it folds tap **Follow finger**. The fold stops and the arm stays
+   engaged (the log says `relax cancelled`).
+
+### 6d. If it mishears, or acts slowly
+
+- Press ▶ on the line in Heard: that's exactly what Whisper got. A muffled or clipped recording
+  means the mic or its placement; a clear recording that was misread means calibration (6b, step 3)
+  should learn it.
+- Background noise causing `HEARING` with nobody talking: rerun **Quiet room**, or raise **Speech
+  threshold** in Settings.
+- Too slow: lower **Pause before acting** (it waits that long after you stop talking). 0.4 s is
+  about the lowest that doesn't cut people off mid-sentence.
+
+| Setting | Default | What it does |
+|---|---|---|
+| Speech threshold | 0.5 | How sure the speech detector must be that someone is talking. Quiet room sets it |
+| Pause before acting | 0.5 s | The quiet that ends what you said |
+| Listen after the name | 5 s | After a bare "Dummy", how long it waits for the command |
+| Speech model | Small | Medium and Turbo are slower and rarely better for short commands |
+| Sounds | on | Beeps on the laptop: heard the name / done / refused |
+| Dry run | off | Hear and show, never move (a spoken "stop" still works) |
+
+Worth noting if something goes wrong: the Heard line (text and result), whether ▶ sounds right,
+and the chip's state at the time.
+
+---
+
 
 ## Gotchas
 

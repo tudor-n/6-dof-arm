@@ -6,6 +6,7 @@ Three processes' worth of responsibility, two of them in one Python process.
 ┌─ browser ────────────────────────────────────────────────┐
 │  index.html        Move + Calibrate tabs, canvas views   │
 │  cam_panel.js      Camera tab, STOP, log  (injected)     │
+│  voice_panel.js    Voice tab              (injected)     │
 └───────────┬──────────────────────────────────────────────┘
             │ WebSocket /ws  (JSON)      MJPEG /video
 ┌───────────▼──────────────────────────────────────────────┐
@@ -15,6 +16,7 @@ Three processes' worth of responsibility, two of them in one Python process.
 │   pick_seq        hover, descend, close, lift, drop      │
 │   vision (thread) ─────────► vision.py                   │
 │   follow (thread) ─────────► finger.py                   │
+│   voice (threads) ─────────► hearing.py    ◄── mic       │
 └───────────┬──────────────────────────────────────────────┘
             │ USB serial, "J a0..a5"
 ┌───────────▼──────────────────────────────────────────────┐
@@ -197,6 +199,80 @@ it, and the finger has to arm again afterwards. Losing the hand holds the arm wh
 gripper and wrist roll are never touched. All of this lives in the server, and the UI only
 reflects `state.follow`, so two tablets can't disagree about whether follow is on.
 
+## Voice
+
+The Voice tab lets you say **"Dummy, come here"** (finger follow on), **"Dummy, start pose"**,
+**"Dummy, relax"** (fold to the rest pose, then go limp) and **"Dummy, stop"**. It listens in one
+of two modes, chosen on the tab: **wake word**, where only speech that starts with "Dummy" counts,
+or **push to talk**, where holding the button (or V on a keyboard) is the only way in and the name
+is optional. Push to talk also works in wake-word mode, as a bypass for testing.
+
+**hearing.py knows nothing about the arm**, like finger.py. It reports what it heard and a command
+id; the server decides what that means.
+
+- Audio comes from the mic in 32 ms frames: through `parec` on Linux (PipeWire / PulseAudio does
+  the resampling, and no PortAudio is needed), through `sounddevice` elsewhere. **Silero VAD**
+  scores each frame for speech. It's the ONNX model faster-whisper ships, run with onnxruntime,
+  because an energy threshold can't tell a voice from servo whine.
+- `Segmenter`, a pure state machine, cuts the scores into utterances. Speech starts after two
+  frames over the threshold, ends after `end_silence` below it (with Silero's 0.15 hysteresis),
+  and keeps 0.4 s from before the start so the first syllable isn't lost. Push to talk overrides
+  all of it: everything between press and release, plus a 0.3 s tail, is one utterance.
+- **faster-whisper** (`small.en` by default) transcribes each utterance with "Dummy" as a hotword.
+  On the GPU that takes about 60-80 ms; on the CPU about 0.7 s. CTranslate2 is built against
+  CUDA 12 while torch here brings CUDA 13, so `hearing.py` loads cuBLAS 12 from the
+  `nvidia-cublas-cu12` wheel by full path before the model loads, and falls back to the CPU if
+  that fails. Whisper's own no-speech probability above 0.5 discards the text: on noise, the
+  hotword otherwise invites a hallucinated "Dummy".
+- `Matcher`, pure, turns the text into a command. The wake word must be one of the first three
+  words, spelled exactly (or as a learned alias), and **never** fuzzy-matched: a fuzzy match would
+  make "Mummy, come here" or "my tummy" a trigger for everyone. What follows it is fuzzy-matched
+  (character similarity at least 0.8, and 0.1 clear of the runner-up command) after filler words
+  are dropped, so "Hey Dummy, please come here" works and "Dummy, can you start the pose estimation
+  again?" doesn't.
+
+**The wake word isn't a separate model.** Every utterance the VAD finds is transcribed, and it counts
+only if it starts with the name and the rest is a command. A dedicated spotter (openWakeWord,
+Porcupine) would need a custom model trained or an account, and a two-syllable word like "dummy" is
+where those are weakest. Whisper needs nothing trained, the word can be changed in `voice.json`, and
+the tab can show exactly what was heard and why it did or didn't count. The cost is running Whisper on
+all speech near the mic, which on the GPU is negligible. A bare "Dummy" opens a 5 s window in which
+the command needs no name, for people who pause after it.
+
+**Calibration** is on the tab, three steps, about two minutes:
+1. *Mic check*: shows the voice-over-room margin. Under 12 dB is too quiet to be reliable.
+2. *Quiet room*: 8 s of silence (servos running, ideally). It sets the speech threshold just above
+   the loudest 1% of what the VAD scored there, never below 0.5.
+3. *Your voice*: each command twice. When Whisper consistently writes your "Dummy" as something else,
+   it learns that spelling as a wake alias, and likewise for a command phrase. `learn()` is cautious:
+   an alias must look a little like the word it stands for, must not look like another command, and
+   the Settings page lists everything learned with a button to forget it.
+
+**Doing a command (server.py).** Voice is one more client of `handle()` (`VOICE`), so Live, the pose
+check, pick refusal and follow's allowlist apply to it exactly as to a button. On top of that:
+- **Motion is refused while Live is off**, rather than queued, since a target set now would make
+  the arm jump when Live goes on.
+- **Commands are refused when no page is open**, the same presence check follow uses: whoever
+  talks can see the STOP button. **"Stop" is exempt**, from this and from dry run: it never moves
+  anything.
+- **"Relax" folds to the rest pose first** (`voice_relax`), waits until the arm arrives, and only then
+  sends `relax 63`, so the arm never drops from mid-air. These cancel it: STOP, another spoken
+  command, follow switching on, voice going off or into dry run, and the same manual messages that
+  end follow. Even uncancelled, it checks again right before going limp: Live still on, follow off,
+  and the arm at exactly the rest pose it was sent to. Anything else (a USB reconnect resets the
+  target and turns Live off) leaves the arm engaged. `test_voice.py` runs these cases against the real
+  control loop.
+- **Nothing acts late.** Every utterance carries the `Hearing.gen` it started in. STOP, a mode change
+  and a calibration starting or ending bump it, so speech still being transcribed when you press
+  STOP is dropped, and so is a command that reaches the server after it.
+- **Dry run** hears and shows everything and acts on nothing except "stop".
+
+The Voice tab's own messages (`voice_set`, `voice_ptt`, `voice_train`, `voice_mics`) are in
+`FOLLOW_SAFE`: changing a voice setting doesn't end follow. A push-to-talk hold is resent every
+100 ms, and the server releases it 0.4 s after the last one. Short beeps on the laptop say "heard
+the name", "done" and "refused"; the mic ignores the audio while one plays. The last 20 utterances
+stay in memory for the tab's play buttons, and nothing is written to disk.
+
 ## Frames and the chain of trust
 
 Each layer is only as good as the one under it, which is why CALIBRATION.md has a strict order:
@@ -231,7 +307,7 @@ signs and limits. It knows nothing about the camera.
 `cam_panel.js` is a self-contained IIFE that the server injects before `</body>` when
 serving `/`. It adds the Camera tab, a STOP button, and a log panel visible from every
 tab. Keeping it separate means the camera UI can be rewritten without touching the
-original console.
+original console. `voice_panel.js` is injected after it the same way and adds the Voice tab.
 
 ## Testing
 
@@ -249,5 +325,12 @@ python test_geometry.py        # or: pytest test_geometry.py
 V sign, bent index) and drives `FollowController` frame by frame through engage, hold, rewind,
 jump rejection, deadband and re-engage. `test_geometry.py` covers `reachable_target()` and checks
 that the raised-plane raycast recovers a known point above the table.
+
+`test_voice.py` feeds transcripts to the matcher (wake word, chatter, look-alike words, push to
+talk, learned aliases), made-up speech probabilities to the segmenter (pre-roll, blips, hysteresis,
+push to talk) and takes to the calibration's `learn()`. With `DUMMY_VOICE_CLIPS=<folder>` it also runs
+real WAVs through the whole chain. A wrong action fails it outright, and misses may be up to 5%.
+`DUMMY_VOICE_WAV=<folder>` makes the server play WAVs instead of the mic, for testing the tab with
+no one talking.
 
 `test_markers.py` and `calibrate_camera.py` are interactive hardware tools, not tests.
