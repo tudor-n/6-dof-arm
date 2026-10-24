@@ -361,6 +361,48 @@ and the chip's state at the time.
 
 ---
 
+## 7. Personality (branch `feat/personality`)
+
+DUMMY nods when he hears just "Dummy", shakes his head (the base swings) at "are you dumb?", and
+dances at "good boy". Offline first:
+
+```
+.venv/bin/python test_gestures.py      # 29/29
+.venv/bin/python test_voice.py         # 40/40
+```
+
+### 7a. With the Try buttons first
+
+Keep a hand near STOP. Live on, speed **20** (gestures use their own speed, 120 °/s, so they're
+lively anyway). Press **Start pose**.
+
+1. Voice tab → **Personality** → **Try: Nod**. The gripper dips, comes up, dips, and returns exactly
+   to where it was. The line next to the buttons says `nodded`.
+2. **Shake**: the whole arm swings left and right, smaller each time, and stops where it began.
+3. **Dance**: sway with the head bobbing, a roll wiggle, the gripper opening and closing twice, a
+   double nod, home. Watch the gripper at the end: it must be **still** (braked), not creeping.
+   - If the jaws drift more than you like over a few dances, switch **Gripper clap** off.
+4. Press **Dance** again and hit **STOP** halfway. It freezes where it is, the gripper stops, and
+   it doesn't carry on.
+5. **Rest pose**, then **Nod**: refused (`no room to nod here (the wrist pitch limit)`), because
+   the wrist is at its limit there. **Shake** still works.
+6. **Relax all**, then **Nod**: refused (`the arm is relaxed`). **Start pose** brings it back.
+
+### 7b. By voice
+
+Wake word on, as in §6.
+
+1. Say **"Dummy"**: a nod (and the chime), then it listens for 5 s as before.
+2. **"Dummy, are you dumb?"**: "uh-uh" and a head shake.
+3. **"Dummy, good boy"**: a little tune and the dance.
+4. **"Dummy, are you awake?"**: a nod.
+5. **"Dummy, you're not dumb"**: nothing (a negation never matches).
+6. Turn **Follow finger** on, point, and say **"Dummy, good boy"**. It dances, comes back over your
+   finger and keeps following.
+7. **Dry run** on: the Heard list says `dry run, not acted on` (or `would nod`) and nothing moves.
+
+---
+
 
 ## Gotchas
 

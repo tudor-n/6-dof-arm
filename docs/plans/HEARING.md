@@ -49,6 +49,9 @@ modes): 337/340 right, **0 wrong actions**, 3 misses ("Start pose" without the n
 "Suppose"; a 0.18 s "Dummy" read as "Duddy"). Not yet tried with a person talking to the real arm.
 See ARCHITECTURE.md (Voice) for how it works and TEST_INSTRUCTIONS.md §6 for the hardware test.
 
+**Then personality** (`feat/personality`): a nod for a bare "Dummy", a head shake for "are you dumb?",
+a happy dance for "good boy". See ARCHITECTURE.md (Personality) and TEST_INSTRUCTIONS.md §7.
+
 ## 0. What already exists to build on
 
 | Existing piece | Why it matters for hearing |
