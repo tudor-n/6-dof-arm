@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DUMMY</title>
+<style>
+  /* The window's own page, until server.py answers, and when it can't (main.rs passes the state in
+     the query). The arm UI's language: black, hairlines, tracked caps, colour only for meaning. */
+  html, body { height: 100%; margin: 0; background: #000; color: #fff; }
+  body { overflow: hidden; font: 400 15px/1.4 Roboto, "Droid Sans", system-ui, sans-serif; user-select: none; }
+  .mono { font-family: "Roboto Mono", "Droid Sans Mono", ui-monospace, "DejaVu Sans Mono", monospace; font-weight: 500; }
+  .bar { box-sizing: border-box; height: 56px; display: flex; align-items: stretch; border-bottom: 1px solid #262626; }
+  /* the logo handoff's top-bar lockup: 26px mark, 10px gap, 13px wordmark tracked .14em */
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 20px; border-right: 1px solid #262626;
+           font-size: 13px; font-weight: 600; letter-spacing: .14em; }
+  .brand span { margin-right: -.14em; }
+  .brand svg { display: block; }
+  .status { display: flex; align-items: center; gap: 8px; padding: 0 22px; font-size: 12px; color: #8a8a8a; letter-spacing: .06em; }
+  .dot { width: 8px; height: 8px; border-radius: 4px; background: #ffb020; }
+  .body { padding: 48px 40px; max-width: 760px; }
+  .lb { font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: #ffb020; }
+  h1 { margin: 12px 0 0; font-size: 26px; font-weight: 500; line-height: 1.25; }
+  p { margin: 12px 0 0; color: #8a8a8a; font-size: 16px; line-height: 1.5; }
+  pre { margin: 24px 0 0; padding: 14px 16px; max-height: 220px; overflow: auto; border: 1px solid #262626; border-radius: 4px;
+        color: #8a8a8a; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; user-select: text; }
+  .btns { display: flex; gap: 12px; margin-top: 28px; }
+  button { height: 48px; padding: 0 20px; border: 1px solid #3a3a3a; border-radius: 3px; background: #000; color: #fff;
+           font: 600 12px/1 Roboto, "Droid Sans", system-ui, sans-serif; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+  button.pr { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
+  button:hover { border-color: #8a8a8a; }
+  button.pr:hover { border-color: #fff; }
+  button:active { background: #fff; color: #000; border-color: #fff; }
+  button.pr:active { background: #b8b8b8; border-color: #b8b8b8; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="brand mono">
+    <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true"><path d="M34 50.5H64" stroke="#7a4a2a" stroke-width="2.2" fill="none"/><path d="M34 54H64" stroke="#d92d20" stroke-width="2.2" fill="none"/><path d="M34 57.5H64" stroke="#ffc21a" stroke-width="2.2" fill="none"/><rect x="10" y="48" width="24" height="12" rx="1.5" fill="#fff"/><path d="M22 42L17 22L41 13" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M43 9L52 6M43 17L52 20" stroke="#fff" stroke-width="3.5" stroke-linecap="round" fill="none"/><circle cx="22" cy="42" r="5" fill="#000" stroke="#fff" stroke-width="3"/><circle cx="17" cy="22" r="5" fill="#000" stroke="#fff" stroke-width="3"/><circle cx="41" cy="13" r="3.6" fill="#000" stroke="#fff" stroke-width="3"/></svg>
+    <span>DUMMY</span>
+  </div>
+  <div class="status mono"><span class="dot"></span><span id="st">STARTING THE ARM SERVER…</span></div>
+</div>
+<div id="failed" class="body" hidden>
+  <div class="lb">Arm server</div>
+  <h1 id="title"></h1>
+  <p id="hint"></p>
+  <pre id="log" class="mono" hidden></pre>
+  <div class="btns">
+    <button id="retry" class="pr" type="button">Try again</button>
+    <button id="sim" type="button">Open without the arm</button>
+  </div>
+</div>
+<script>
+  // Text only (textContent): the log lines are the server's output.
+  const WORDS = {
+    noarm: ["The arm isn't plugged in.", "Plug the ESP32's USB cable into the laptop, then try again. Or open DUMMY without the arm: the camera, the arm views and the maths all still work."],
+    perm: ["No permission to open the arm's USB port.", "Log out of KDE and back in once: you were added to the dialout group after this session started. Then try again."],
+    busy: ["Another program has the arm's USB port.", "Close it (a serial monitor, idf monitor, or a server.py in a terminal), or unplug the USB cable and plug it back in. Then try again."],
+    port: ["Another program is using port 8080.", "Something that isn't the arm server is on the port the arm UI uses. Close it, then try again."],
+    stopped: ["The arm server stopped.", "Its last lines are below. Try again to start it."],
+    exit: ["The arm server didn't start.", "Its last lines are below."],
+  };
+  const q = new URLSearchParams(location.search);
+  const $ = (id) => document.getElementById(id);
+  const failed = q.get('state') === 'failed';
+  if (q.get('sim') === '1') $('st').textContent = 'STARTING WITHOUT THE ARM…';
+  if (failed) {
+    const [title, hint] = WORDS[q.get('kind')] || WORDS.exit;
+    $('st').textContent = 'NOT RUNNING';
+    $('title').textContent = title;
+    $('hint').textContent = hint;
+    const log = q.get('log') || '';
+    $('log').textContent = log;
+    $('log').hidden = !log;
+    $('failed').hidden = false;
+  }
+  const start = (sim) => {
+    $('failed').hidden = true;
+    $('st').textContent = sim ? 'STARTING WITHOUT THE ARM…' : 'STARTING THE ARM SERVER…';
+    window.__TAURI__.core.invoke('start', { sim });
+  };
+  $('retry').addEventListener('click', () => start(false));
+  $('sim').addEventListener('click', () => start(true));
+</script>
+</body>
+</html>
