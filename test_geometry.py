@@ -363,6 +363,190 @@ def test_joint_angles_still_reports_four_arm_joints():
     assert len(S.joint_angles([90.0] * 6, cfg)) == 4
 
 
+# ------------------------------------------------------------ finger follow: reach clamp
+
+def exact_at(x, y, z, pitch, cfg, roll=90.0):
+    """Can the tool hit (x, y, z) exactly at this pitch? The same test the follow loop needs."""
+    servo, reach, lim = S.ik(x, y, z, pitch, cfg, roll)
+    if reach or lim:
+        return False
+    return math.dist(S.fk(list(servo) + [roll, 90.0], cfg)[0][-1], (x, y, z)) <= 2.0
+
+
+def polar(r, az_deg):
+    return r * math.cos(math.radians(az_deg)), r * math.sin(math.radians(az_deg))
+
+
+def any_pitch_exact(x, y, z, cfg):
+    """Can ANY pitch in the follow window hit (x, y, z) exactly? 1 degree steps."""
+    lo, hi = S.FOLLOW_PITCHES
+    return any(exact_at(x, y, z, lo + k, cfg) for k in range(int(hi - lo) + 1))
+
+
+def test_reachable_target_leaves_a_reachable_point_alone():
+    cfg = S.load_cfg()
+    for x, y, z, pitch in TARGETS:
+        assert S.reachable_target(x, y, z, pitch, cfg, 90.0) == (x, y, z, pitch, False)
+
+
+def test_reachable_target_changes_the_pitch_before_it_moves_the_point():
+    """The bug this guards: pitch locked at whatever the arm happened to be at made follow park
+    the tool ~90 mm from a perfectly reachable spot, and call it the reach limit."""
+    cfg = S.load_cfg()
+    x, y, z, pref = 230.0, 50.0, 115.0, -32.0
+    assert not exact_at(x, y, z, pref, cfg), "the case needs a point the preferred pitch misses"
+    got = S.reachable_target(x, y, z, pref, cfg, 90.0)
+    assert got is not None and got[:3] == (x, y, z) and not got[4], f"should hit it exactly, got {got}"
+    p = got[3]
+    assert exact_at(x, y, z, p, cfg)
+    closer = p + (1.0 if pref > p else -1.0)
+    assert not exact_at(x, y, z, closer, cfg), f"pitch {p} is not the nearest workable one to {pref}"
+
+
+def test_reachable_target_clamps_an_over_reach_onto_the_boundary():
+    """Pointing past the edge must stop AT the edge, on the same azimuth and height."""
+    cfg = S.load_cfg()
+    for x, y, z, pitch in TARGETS:
+        r0, az = math.hypot(x, y), math.degrees(math.atan2(y, x))
+        got = S.reachable_target(*polar(700.0, az), z, pitch, cfg, 90.0)   # past any reach
+        assert got is not None and got[4], f"{(x, y, z, pitch)} at 700 mm should be clamped, got {got}"
+        gx, gy, gz, gp, _ = got
+        r = math.hypot(gx, gy)
+        assert abs(math.degrees(math.atan2(gy, gx)) - az) < 1e-6 and gz == z
+        assert r0 - 0.5 <= r < 700.0, f"r {r:.1f} for a reachable r {r0:.1f}"
+        assert exact_at(gx, gy, gz, gp, cfg), "the clamped point itself is not reachable"
+        # one 5 mm scan ring further out, no pitch reaches: this really is the edge
+        assert not any_pitch_exact(*polar(r + 6.0, az), z, cfg), f"r {r:.1f} is not the boundary"
+
+
+def test_reachable_target_clamps_a_wildly_far_point():
+    """A finger pointing off the far edge of the table is hundreds of mm past any reach. The
+    radius scan must still find the edge, not run out of rings before it gets back into range."""
+    cfg = S.load_cfg()
+    for x, y, z, pitch in TARGETS:
+        az = math.degrees(math.atan2(y, x))
+        got = S.reachable_target(*polar(1500.0, az), z, pitch, cfg, 90.0)
+        assert got is not None and got[4], f"{(x, y, z, pitch)} at 1500 mm should be clamped, got {got}"
+        assert exact_at(got[0], got[1], z, got[3], cfg)
+
+
+def test_reachable_target_clamps_the_azimuth_to_the_base_limits():
+    cfg = S.load_cfg()
+    lo, hi = S.joint_ranges(cfg)[0]
+    x, y, z, pitch = TARGETS[0]
+    r0 = math.hypot(x, y)
+    for want, edge in ((hi + 15.0, hi), (lo - 15.0, lo)):
+        got = S.reachable_target(*polar(r0, want), z, pitch, cfg, 90.0)
+        assert got is not None and got[4]
+        assert abs(math.degrees(math.atan2(got[1], got[0])) - edge) < 0.01, f"azimuth {want:.0f} -> {got}"
+        assert abs(math.hypot(got[0], got[1]) - r0) < 0.5, "a reachable radius should survive the azimuth clamp"
+
+
+def test_reachable_target_pushes_a_too_close_point_outward():
+    cfg = S.load_cfg()
+    x, y, z, pitch = TARGETS[0]
+    az = math.degrees(math.atan2(y, x))
+    assert not any_pitch_exact(*polar(10.0, az), z, cfg), "10 mm from the base should be unreachable"
+    got = S.reachable_target(*polar(10.0, az), z, pitch, cfg, 90.0)
+    assert got is not None and got[4]
+    r = math.hypot(got[0], got[1])
+    assert r > 10.0 and exact_at(got[0], got[1], z, got[3], cfg)
+    assert not any_pitch_exact(*polar(r - 6.0, az), z, cfg), f"r {r:.1f} is not the nearest reachable radius"
+
+
+def test_reachable_target_gives_up_on_a_hopeless_height():
+    x, y, _, pitch = TARGETS[0]
+    assert S.reachable_target(x, y, 2000.0, pitch, S.load_cfg(), 90.0) is None
+
+
+def test_reachable_target_flags_a_point_behind_the_base():
+    """Behind the base is moved onto x >= 0; that is a clamp, and the UI must say so."""
+    got = S.reachable_target(-80.0, 20.0, 115.0, -32.0, S.load_cfg(), 90.0)
+    assert got is not None and got[4] and got[0] >= 0.0, got
+
+
+def test_follow_switches_off_for_anything_not_known_safe():
+    """An allowlist: relax, creep, flip or set-zero during follow would have the next finger move
+    wake a limp servo under the operator's hand, or solve with a mirrored joint (found in review)."""
+    for t in ("relax", "creep", "setzero", "flip", "setlim", "links", "stop", "jog", "tip", "home",
+              "rest", "nudge", "raw", "marker_record", "pick_click", "some_future_message"):
+        assert S.follow_breaks(t, {}), t
+    for t in ("follow", "follow_z", "speed", "client", "resync", "vset", "detect", "grip", "roll", "jaws"):
+        assert not S.follow_breaks(t, {}), t
+    assert S.follow_breaks("live", {"on": False}) and not S.follow_breaks("live", {"on": True})
+    assert S.follow_breaks("unlock", {"on": True}) and not S.follow_breaks("unlock", {"on": False})
+
+
+class _HoverV:
+    """Just the parts of Vision that the follow height buttons touch."""
+    def __init__(self, h): self.s = {"follow_hover": h}; self.saves = 0
+    def table_z(self, x, y): return 5.0
+    def set_setting(self, k, v): self.s[k] = v; self.saves += 1
+    def save(self): self.saves += 1
+
+
+def _with_hover(h, fn):
+    old = S.V, S.S.follow, S.S.follow_pending, S.S.follow_nudge, S.S.follow_target, S.S.follow_pitch, S.S.follow_hlimit
+    S.V = _HoverV(h)
+    try: return fn(S.V)
+    finally: S.V, S.S.follow, S.S.follow_pending, S.S.follow_nudge, S.S.follow_target, S.S.follow_pitch, S.S.follow_hlimit = old
+
+
+def test_follow_height_preset_tap():
+    def go(v):
+        S.S.follow, S.S.follow_pending = True, False
+        S.set_follow_hover(S.FOLLOW_PRESETS["high"])
+        assert v.s["follow_hover"] == S.FOLLOW_PRESETS["high"] and v.saves == 1
+        assert S.follow_preset() == "high"
+        assert S.S.follow_pending       # the held target is rewritten at the new height
+        S.set_follow_hover(999.0); assert S.follow_hover() == S.FOLLOW_HOVER[1]
+        S.set_follow_hover(-5.0); assert S.follow_hover() == S.FOLLOW_HOVER[0]
+        assert S.follow_preset() == ""
+    _with_hover(110.0, go)
+
+
+def test_follow_height_hold_moves_from_current_and_saves_once_on_release():
+    def go(v):
+        S.S.follow, S.S.follow_target, S.S.follow_pitch = True, (230.0, 50.0, 135.0), -32.0
+        S.S.follow_nudge = (-1, 10.0)
+        for k in range(10): S.follow_nudge_tick(1.0 + k * 0.1, 0.1)    # held 1 s
+        assert abs(v.s["follow_hover"] - (130.0 - S.FOLLOW_NUDGE_MMS)) < 1e-6 and v.saves == 0
+        S.follow_nudge_tick(11.0, 0.02)                                # past the deadline: let go
+        assert S.S.follow_nudge is None and v.saves == 1
+    _with_hover(130.0, go)
+
+
+def test_follow_height_hold_goes_as_far_as_the_arm_reaches():
+    """Held Low / High is not limited to the presets: it stops at the last height the arm can
+    still hit exactly over the held spot (or at FOLLOW_HOVER), and says which end it is at."""
+    def go(v):
+        S.S.follow, S.S.follow_target, S.S.follow_pitch = True, (230.0, 50.0, 115.0), -32.0
+        for d, end, name in ((1, 1, "highest"), (-1, 0, "lowest")):
+            S.S.follow_nudge = (d, 1e9)
+            for k in range(600): S.follow_nudge_tick(20.0, 0.05)       # held 30 s
+            h = S.follow_hover()
+            assert S.S.follow_hlimit == name, (d, h, S.S.follow_hlimit)
+            assert S.hover_reaches(h), h
+            assert h == S.FOLLOW_HOVER[end] or not S.hover_reaches(h + d * 1.0), h
+            assert h > S.FOLLOW_PRESETS["high"] if d > 0 else h < S.FOLLOW_PRESETS["low"], h
+    _with_hover(110.0, go)
+
+
+def test_finger_raycast_above_the_table():
+    """A fingertip h mm above the table must be cast onto the plane h mm up, not the table:
+    z_off is added to the plane's c, so it is the height above the plane at that XY."""
+    vis, rvec, tvec, _ = synthetic_scene()
+    vis.rvec, vis.tvec = rvec, tvec
+    vis.s["x_trim"] = vis.s["y_trim"] = 0.0
+    for h in (15.0, 60.0):
+        for x, y in [(140.0, 0.0), (220.0, 150.0), (180.0, -200.0)]:
+            u, v = vis.project([[x, y, vis.table_z(x, y) + h]])[0]
+            back = vis.pixel_to_table(u, v, raw=True, z_off=h)
+            assert math.hypot(back[0] - x, back[1] - y) < TOL_MM, f"h {h}: ({x}, {y}) -> {back}"
+            flat = vis.pixel_to_table(u, v, raw=True, z_off=0.0)
+            assert math.hypot(flat[0] - x, flat[1] - y) > 5.0, "ignoring the height should visibly miss"
+
+
 # ------------------------------------------------- tape measurements (non-FK ground truth)
 
 # Tudor's hand measurements, 2026-10-19. The only numbers in this project that do not come

@@ -156,6 +156,112 @@ measure the tool physically, expect to adjust both.
 
 ---
 
+## 5. Finger follow (branch `feat/finger-follow`)
+
+With **Follow finger** on, the arm hovers over the spot your index finger points at and follows
+it around the table. Only a *pointing* hand moves it: index finger straight, the other fingers
+curled. An open hand, a fist or a hand holding something is ignored.
+
+### 5a. Install and offline checks (no hardware)
+
+MediaPipe is optional, like ultralytics. Install it, but check it hasn't swapped out your
+OpenCV, because the ArUco pose needs the `opencv-contrib` build:
+
+```
+py -3.14 -c "import cv2; print(cv2.__version__, hasattr(cv2, 'aruco'))"
+py -3.14 -m pip install mediapipe
+py -3.14 -c "import cv2; print(cv2.__version__, hasattr(cv2, 'aruco'))"
+```
+
+Both lines must print the **same version** and `True`. If they don't, pip replaced OpenCV: run
+`py -3.14 -m pip install --force-reinstall opencv-contrib-python`, then reinstall mediapipe with
+`--no-deps`.
+
+```
+py -3.14 test_finger.py
+py -3.14 test_geometry.py
+```
+
+Both should pass. Then:
+
+```
+py -3.14 server.py --sim --no-camera --http 8099
+```
+
+On the Camera tab, tap **Follow finger**. It should **refuse** and stay off, with a log line
+saying why (no camera, so no pose). That's correct.
+
+The first time follow switches on for real, it downloads its hand model (a few MB) into
+`weights/`, so that first time needs internet. If the machine is offline, copy
+`hand_landmarker.task` into `weights/` by hand (the download address is in `finger.py`).
+
+### 5b. On the arm
+
+Keep a hand near STOP the whole time. **Esc** works too.
+
+1. Start the server with the arm and camera as in section 3. Check the pose chip says
+   **POSE OK**. Turn **Live** on and set the speed to **20** (the lowest).
+2. On the Camera tab, tap **Follow finger** (or press **F** on a keyboard; F turns follow on only from the Camera tab, but off from anywhere). The button turns
+   white and the line under it says `FOLLOW: show a pointing finger`. Nothing moves yet.
+   - If it stays off, open the log: it's refused when Live is off, the pose isn't healthy, a
+     pick is running or MediaPipe isn't installed.
+3. Point at the middle of the table, with your fingertip just above the surface (a centimetre
+   or two: that's the height the aim assumes, see 5c). Within a moment the button turns **amber** (arming), then **green** (tracking), and
+   the arm rises to its hover height (110 mm) and moves over a spot **just ahead** of your
+   fingertip (30 mm, so it doesn't hide your finger from the camera).
+   - On the video you should see your hand's outline, a ring on the fingertip and a cross where
+     the arm is aiming.
+4. Move your hand **slowly** left and right. The arm should follow smoothly, without buzzing
+   when your hand is still. Once that works, try speed **60**.
+5. Point **past the far edge** of what the arm can reach. It should go as far as it can in that
+   direction and stop. The status line says it's at the reach limit.
+6. Point at a spot, then **curl your finger**. The arm should stay where you were pointing, not
+   jump to where the curl moved your fingertip. The button turns amber (holding). Point again
+   and it carries on.
+7. Pull your hand **out of view**. The arm should hold still.
+   - While it holds, tap **Low**, **Hover** and **High** under Follow finger. The arm should sink
+     or rise in place to 70, 110 and 160 mm, and the tapped button turns white. The status line
+     shows the height.
+   - **Hold** High: the arm keeps rising (about 4 cm a second) until you let go or it can't go
+     any higher over that spot; the status line then says `highest here`. Hold Low: it sinks
+     until `lowest here` (20 mm above the table at most spots). Letting go stops it within half
+     a second.
+   - Height buttons do **not** switch follow off.
+8. Check that follow switches **off** (button goes back to plain) each time you:
+   - press **STOP**;
+   - press **Esc**;
+   - drag a handle on the Move tab;
+   - tap a jog button;
+   - turn **Live** off.
+
+   After each one, switch follow back on for the next.
+
+### 5c. If the aim is off
+
+The camera can't tell how high your finger is, so it assumes it's 15 mm above the table. If you
+hold it higher, the arm aims a bit **farther from the camera** than you meant. That's expected.
+
+If the arm is **consistently** off along the line towards or away from the camera, change
+**Finger height above table** in Camera → Setup → Finger follow:
+- the arm lands too far from the camera: raise it;
+- the arm lands too close to the camera: lower it.
+
+Sideways error doesn't come from this, so look at the pose and calibration for that.
+
+The other settings on that page:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Hover height above table | 110 mm | How high the arm hovers. Kept between 20 and 400, and the arm may reach less. The Low / Hover / High buttons change it too |
+| Aim ahead of the fingertip | 30 mm | How far in front of your fingertip it aims |
+| Deadband | 3 mm | Hand movement smaller than this is ignored. Raise it if the arm buzzes |
+| Follow tool pitch | blank | The wrist angle follow prefers. Blank = the angle it had when follow started. It tilts away from this only as far as it must to reach where you point |
+
+Worth noting if something goes wrong: the status line text, the button colour, and whether the
+hand outline on the video was there at the time.
+
+---
+
 
 ## Gotchas
 

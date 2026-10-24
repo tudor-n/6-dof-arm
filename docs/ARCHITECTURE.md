@@ -14,6 +14,7 @@ Three processes' worth of responsibility, two of them in one Python process.
 │   control_loop    50 Hz interpolate -> serial            │
 │   pick_seq        hover, descend, close, lift, drop      │
 │   vision (thread) ─────────► vision.py                   │
+│   follow (thread) ─────────► finger.py                   │
 └───────────┬──────────────────────────────────────────────┘
             │ USB serial, "J a0..a5"
 ┌───────────▼──────────────────────────────────────────────┐
@@ -109,6 +110,93 @@ in table coordinates, because a gripper has to close *across* a pen, not along i
 `touched` recordings (with the wrist pitch and roll each was taken at), pick settings, and
 the wrist-roll zero and sign.
 
+## Finger follow
+
+With **Follow finger** on, the tool hovers over the spot your index finger points at and
+follows it across the table. It's for quick positioning, not precision. Most of the design is
+about the arm never doing anything you didn't mean.
+
+**finger.py knows nothing about the arm.** It has two halves, and only reports table coordinates.
+
+- `HandTracker` is a daemon thread that runs only while follow is on. It reads `vision.frame`
+  (already undistorted), runs MediaPipe's hand landmarker on a 640-px copy, and decides whether
+  a hand is *pointing*: index straight, the other three curled, thumb ignored. That test uses
+  MediaPipe's 3D *world* landmarks, which are metric and don't depend on the view, so the
+  oblique overhead camera doesn't bend the answer. Only a pointing hand counts, so an open palm,
+  a fist or a hand holding a tool never drives the arm. The fingertip pixel then goes through
+  `vision.pixel_to_table()` like every other table coordinate. The tracker never raises into its
+  caller: failures are logged and the observation goes `ok=False`. MediaPipe and its model file
+  (`weights/hand_landmarker.task`, downloaded on first use) are optional, like ultralytics.
+- `FollowController` is a pure state machine (`idle → arming → tracking → holding`) stepped by
+  the control loop. It's pure so it can be tested offline, frame by frame. It does the things
+  that make a hand-driven arm bearable. A **0.15 s engage debounce** means a hand passing through
+  doesn't move anything. A **One Euro filter** is smooth when the hand is slow and responsive
+  when it's fast. **Jump rejection** holds back a frame more than 80 mm from the filtered
+  position until a second one agrees, so one bad detection can't fling the arm. A **deadband**
+  stops hand tremor from buzzing the servos. The **release rewind** handles curling the finger:
+  that drags the fingertip, so when the gesture ends the target goes back to where it was about
+  0.15 s earlier. You meant where you were pointing, not where the curl ended. The target is
+  also **led** ~30 mm ahead of the fingertip along the finger, so the arm doesn't park on top of
+  the fingertip and hide it from the camera.
+
+**reachable_target() lives in server.py**, because arm geometry lives there. When you point
+somewhere, it first looks for a tool pitch that hits the point exactly, starting from the
+preferred one (the pitch at the moment follow engages, or `follow_pitch` if that's set) and
+moving outward a degree at a time, so the wrist turns no more than it has to. The wrist's travel
+is narrow enough that, at hover height, only about ten degrees of pitch reach any given spot.
+A pitch held fixed for the session would reach only a band of the table and park the tool
+centimetres from where you point. Only when no pitch reaches the point does it slide the target
+along the same azimuth, at fixed height, to the nearest point the arm can reach (scanned in 5 mm
+rings, then bisected). The azimuth is clamped to the base's range. It deliberately isn't
+`ik_auto()`: that one shrinks the target toward the base and lets the height wander, which is
+fine for a one-off GO but wrong when you asked for "as far as you can in that direction". The
+control loop writes only the four arm joints, at most every 50 ms, and the existing
+speed-limited interpolator does the moving.
+
+**The target height is fixed.** One camera has no depth: the fingertip pixel says which ray the
+finger is on, not how high it is. So the target Z is `table_z + follow_hover` (kept
+within 20-400 mm) and is never derived from the finger. You set the height yourself with the
+Low / Hover / High buttons under Follow finger: a tap loads a preset (70 / 110 / 160 mm), and
+holding Low or High moves it 40 mm/s from wherever it is, as far as the arm reaches. Each step
+of a hold checks that the arm can still hit the held spot exactly at the new height (any pitch
+in the window, `reachable_target(..., exact_only=True)`, a few ms), and stops at the last height
+that works instead of letting the arm be pulled sideways; the status line then says "highest
+here" or "lowest here". Far out the top comes well under 400 (about 235 mm at 380 mm out). A hold is resent every 100 ms, like
+creep, and the server stops it 0.4 s after the last one, so a lost release cannot run away. A
+new height rewrites the held target, so the arm rises or sinks in place even with no finger in
+view. That limitation buys a safety property for free:
+the arm hovers *over* the work, and can never follow a finger down into the hand.
+
+**The parallax caveat.** To turn the ray into a table point, the tracker intersects it with a
+plane `follow_finger_z` mm above the table (default 15 mm, a finger held just over the surface).
+A finger held higher than that lands the target farther from the camera, by about
+`Δh × (horizontal distance to camera) / (camera height)`. With the camera 600 mm up and the hand
+400 mm from it horizontally, a finger 30 mm higher than assumed moves the target about 20 mm.
+That's fine for rough positioning. If the aim is consistently off toward or away from the
+camera, tune `follow_finger_z` rather than anything in the pose.
+
+Estimating the hand's height from its apparent size was tried and doesn't work with this
+camera. Fitting MediaPipe's 3D hand model to the image landmarks (solvePnP: all 21, the palm
+only, and palm plus index), and plain palm width, length or area, all gave errors of ±70 mm or
+worse with the fingertip resting on the table, against about ±10 mm needed. It is steady (2-5 mm
+jitter while still) but biased: a turned hand looks smaller, which reads as farther away, and
+the fitted hand scale varied 1.04-1.28 between calibrations. Real height following needs a
+depth camera.
+
+**Interlocks.** Follow is the arm acting on its own, so it gives way to anything you do.
+Switching it on is refused unless Live is on, the pose is healthy, no pick is running and
+MediaPipe is available. Every message turns it off except a short allowlist that cannot fight
+it (speed, gripper, wrist roll, settings, detect, and Live or unlock being switched *off*). So
+STOP or Esc, HOME, REST, a drag, a jog, GO, a pick, Relax, creep and every calibration control
+end it. It's an allowlist because a list of the dangerous ones goes stale silently: Relax was
+missing from the first one, and the next finger move would have woken a limp servo under the
+operator's hand. Live going off, losing the serial port and the last browser disconnecting also
+end it. An unhealthy pose while tracking only pauses it, because a pose glitch is usually brief.
+While paused the controller is reset every tick, so nothing seen through the bad pose survives
+it, and the finger has to arm again afterwards. Losing the hand holds the arm where it is; it never goes looking. The
+gripper and wrist roll are never touched. All of this lives in the server, and the UI only
+reflects `state.follow`, so two tablets can't disagree about whether follow is on.
+
 ## Frames and the chain of trust
 
 Each layer is only as good as the one under it, which is why CALIBRATION.md has a strict order:
@@ -156,5 +244,10 @@ half round-trips IK → FK with a rolled, offset tool across the roll range.
 ```bash
 python test_geometry.py        # or: pytest test_geometry.py
 ```
+
+`test_finger.py` feeds synthetic hand landmarks to the pointing test (pointing, open palm, fist,
+V sign, bent index) and drives `FollowController` frame by frame through engage, hold, rewind,
+jump rejection, deadband and re-engage. `test_geometry.py` covers `reachable_target()` and checks
+that the raised-plane raycast recovers a known point above the table.
 
 `test_markers.py` and `calibrate_camera.py` are interactive hardware tools, not tests.
