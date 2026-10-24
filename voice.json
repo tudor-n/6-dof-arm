@@ -10,5 +10,10 @@
   "sounds": true,
   "wake_aliases": [],
   "phrase_aliases": {},
-  "noise_db": null
+  "noise_db": null,
+  "personality": true,
+  "gesture_size": 1.0,
+  "gesture_speed": 120.0,
+  "dance_clap": true,
+  "reactions": {}
 }
