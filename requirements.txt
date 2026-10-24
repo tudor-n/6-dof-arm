@@ -13,3 +13,10 @@ ultralytics
 # Finger follow (Camera tab -> Follow finger). Optional: only that toggle needs it, and its
 # hand model downloads into weights/ the first time follow is switched on.
 mediapipe
+
+# Voice tab (hearing.py). Optional: only the Voice tab needs these, and the speech model downloads
+# (~0.5 GB, once) the first time voice is switched on. faster-whisper brings onnxruntime and the
+# Silero VAD model. Its CTranslate2 is built for CUDA 12, so cuBLAS 12 lets it use an NVIDIA GPU
+# (~0.06 s per phrase instead of ~0.7 s on the CPU); on a machine without one it is unused.
+faster-whisper
+nvidia-cublas-cu12; sys_platform == "linux" or sys_platform == "win32"

@@ -4,6 +4,7 @@
    python server.py --port COM5            real arm + camera 0 (Linux: the first non-built-in USB camera)
    python server.py --sim                  no arm (camera still works, handy for checking vision)
    python server.py --port COM5 --camera 1 / --no-camera
+   Voice tab (hearing.py): pip install faster-whisper nvidia-cublas-cu12
 """
 import argparse, asyncio, collections, copy, json, math, sys, time
 from pathlib import Path
@@ -308,6 +309,8 @@ class S:
     follow_kind = ''   # the server's own condition inside a state: '', 'paused', 'reach', 'clamped'
     follow_nudge = None   # (dir, deadline) while Low / High is held; the client resends every 100 ms
     follow_hlimit = ''    # 'highest' / 'lowest' while a held Low / High has hit the end of the reach
+    voice_task = None     # a spoken relax folding the arm to rest before it goes limp
+    voice_ptt = 0.0       # push-to-talk deadline while the Voice tab's button is held; the client resends every 100 ms
 
 V = None   # Vision instance (or None when the camera is off)
 FC = HT = None   # finger.FollowController / HandTracker: made on the first follow-on, kept after
@@ -401,6 +404,8 @@ def world_to_servo_roll(closing_deg, az_deg):
 
 def do_stop():
     if S.pick_task and not S.pick_task.done(): S.pick_task.cancel()
+    voice_cancel()
+    if HEAR is not None: HEAR.cancel_pending()    # a command still being transcribed must not act after STOP
     S.creep = None; S.tgt = list(S.cur); S.tgt[5] = 90.0; S.cur[5] = 90.0
     log("STOP: holding position, gripper braked", "warn")
 
@@ -460,8 +465,9 @@ async def pick_seq(x, y, closing):
 # an allowlist, because a list of the dangerous ones goes stale silently. Relax, creep, flip or
 # set-zero during follow would have the next finger move wake a limp servo under the operator's
 # hand, or solve with a mirrored joint. unlock and live are safe only when switching OFF.
+# The Voice tab's own messages never move the arm (a spoken command arrives as its own message).
 FOLLOW_SAFE = frozenset(("follow", "follow_z", "speed", "client", "resync", "vset", "detect", "cam_click",
-                         "pose_lock", "grip", "roll", "jaws"))
+                         "pose_lock", "grip", "roll", "jaws", "voice_set", "voice_ptt", "voice_train", "voice_mics"))
 FOLLOW_HOVER = (20.0, 400.0)   # mm above the table; a held Low / High also stops where the arm can't reach
 # The height buttons under Follow finger: a tap loads one of these, holding Low / High moves
 # the height down / up from wherever it is at FOLLOW_NUDGE_MMS, as far as the arm reaches.
@@ -514,9 +520,11 @@ def follow_nudge_tick(now, dt):
     set_follow_hover(h, save=False)
 
 def follow_on():
+    """Switch follow on. Returns why it refused, or None."""
     global FC, HT
     if S.follow: return
-    def no(why): log(f"Follow refused: {why}", "err")
+    voice_cancel()      # a spoken relax folding the arm must not go limp under a follow
+    def no(why): log(f"Follow refused: {why}", "err"); return why
     if V is None: return no("vision is not running (camera files missing, --no-camera, or OpenCV not installed)")
     ok, why = V.pose_health()
     if not ok: return no(f"{why}. The arm would hover over the wrong spot - fix the pose first")
@@ -683,6 +691,9 @@ async def control_loop():
         await asyncio.sleep(0.02)
         now = time.time(); dt = now - last; last = now
         if S.follow_nudge and V is not None: follow_nudge_tick(now, dt)
+        if S.voice_ptt and now > S.voice_ptt:     # push to talk whose release never arrived
+            S.voice_ptt = 0.0
+            if HEAR is not None: HEAR.ptt(False)
         if S.follow:
             try: follow_tick(now)
             except Exception as e: follow_off(f"follow crashed: {type(e).__name__}: {e}")
@@ -731,6 +742,10 @@ async def control_loop():
                                         "hover": follow_hover() if V is not None else None,
                                         "preset": follow_preset() if V is not None else "",
                                         "hlimit": S.follow_hlimit}}))
+        if tick % 6 == 3 and S.clients and HEAR is not None:
+            try: vs = HEAR.status()
+            except Exception as e: vs = None; print("voice status:", e)   # never let voice stop the control loop
+            if vs: await broadcast(vs)
         if tick % 10 == 0 and S.clients and V is not None:
             st = V.status(); st["busy"] = bool(S.pick_task and not S.pick_task.done())
             await broadcast(st)
@@ -739,6 +754,8 @@ async def handle(ws, m):
     t = m.get("type")
     if S.follow and follow_breaks(t, m):
         follow_off("STOP" if t == "stop" else "Live turned off" if t == "live" else f"manual control took over ({t})")
+    if ws is not VOICE and S.voice_task and not S.voice_task.done() and follow_breaks(t, m):
+        voice_cancel()      # a spoken relax is folding the arm: the same messages that end follow take over
     if t == "target":
         S.tool = {k: float(m[k]) for k in ("x", "y", "z", "pitch")}
         S.tool["x"] = max(0.0, S.tool["x"])
@@ -845,6 +862,7 @@ async def handle(ws, m):
     elif t == "follow":
         if m.get("on"): follow_on()
         else: follow_off("switched off", "info")
+    elif t in VOICE_MSGS: await voice_msg(t, m)
     elif V is None and t in ("cam_click", "goto_click", "pick_click", "pick_detected", "vset", "detect", "pose_lock", "follow_z",
                              "marker_record", "marker_apply", "marker_reset", "marker_tape",
                              "roll_zero", "roll_flip", "jaws"):
@@ -917,15 +935,143 @@ async def handle(ws, m):
         # usually a page newer than this server: restart server.py after pulling UI changes
         log(f"unknown message type {t!r} - is server.py older than the page? restart it", "warn")
 
+# ---------------- voice ----------------
+# hearing.py turns speech into a command id; this is where a command becomes arm messages. Voice is
+# one more client of handle(), so Live, the pose check, pick refusal and follow's allowlist apply to
+# it exactly as to a button. Commands need a page open somewhere, the same presence check follow has.
+VOICE_MSGS = ("voice_set", "voice_ptt", "voice_train", "voice_mics")
+VOICE_PATH = HERE / "voice.json"
+HEAR = None                              # hearing.Hearing, or None when hearing.py could not load
+LOOP = None                              # the server's event loop: spoken commands are handed over to it
+VOICEQ = collections.deque(maxlen=30)    # recent voice events, replayed to a freshly opened page
+_VOICE_BG = set()                        # running voice_event tasks (asyncio keeps only weak references)
+
+class _VoiceClient:                      # what handle() gets as its `ws` for a spoken command
+    async def send_json(self, msg): pass
+VOICE = _VoiceClient()
+
+def voice_mode_text():
+    return {"off": "off", "ptt": "push to talk (hold the button, or V on a keyboard)",
+            "wake": f'listening for "{HEAR.s["wake_word"].title()}"'}[HEAR.s["mode"]]
+
+def voice_save(s):
+    # called from the hearing threads too (calibration results), while the tab may change a setting
+    try: VOICE_PATH.write_text(json.dumps(dict(s), indent=2) + "\n")
+    except (OSError, RuntimeError, ValueError) as e: log(f"Voice: could not save voice.json: {e}", "err")
+
+def voice_boot():
+    """Make the Hearing object (cheap: nothing heavy loads until voice is on), and start it when
+    voice.json says it was on."""
+    global HEAR, LOOP
+    LOOP = asyncio.get_running_loop()
+    try:
+        from hearing import Hearing
+        try: s = json.loads(VOICE_PATH.read_text())
+        except (OSError, ValueError): s = {}
+        HEAR = Hearing(s, log, voice_from_thread, voice_save); HEAR.apply()
+        if HEAR.s["mode"] != "off": log(f"Voice: {voice_mode_text()} (as it was left)")
+    except Exception as e:
+        HEAR = None; print("Voice disabled:", e)
+
+def voice_from_thread(ev):
+    """Hearing's callback, from its recognise thread: run voice_event on the server's loop."""
+    def go():
+        task = asyncio.ensure_future(voice_event(ev)); _VOICE_BG.add(task); task.add_done_callback(_VOICE_BG.discard)
+    if LOOP is not None: LOOP.call_soon_threadsafe(go)
+
+def voice_replay(): return ([HEAR.status()] + [{"type": "voice_heard", "ev": e} for e in VOICEQ]) if HEAR is not None else []
+
+def voice_cancel():
+    if S.voice_task and not S.voice_task.done(): S.voice_task.cancel()
+
+async def voice_msg(t, m):
+    if HEAR is None: log("Voice is not available: hearing.py did not load (see the server console).", "err"); return
+    if t == "voice_set":
+        if (m.get("key") == "mode" and m.get("value") == "off") or (m.get("key") == "dry_run" and m.get("value")):
+            voice_cancel()      # "never act" includes a relax that is still folding
+        err = HEAR.set(m.get("key"), m.get("value"))
+        if err: log(f"Voice: {err}", "err")
+        elif m.get("key") == "mode": log(f"Voice: {voice_mode_text()}", "ok" if HEAR.s["mode"] != "off" else "info")
+    elif t == "voice_ptt":
+        S.voice_ptt = time.time() + 0.4 if m.get("on") else 0.0
+        HEAR.ptt(bool(m.get("on")))
+    elif t == "voice_train":
+        op = m.get("op")
+        if op == "start": HEAR.train_start()
+        elif op == "cancel": HEAR.train_cancel()
+        elif op == "quiet": HEAR.quiet_start()
+    elif t == "voice_mics": await asyncio.get_running_loop().run_in_executor(None, HEAR.refresh_mics)
+
+async def voice_act(cmd, say):
+    """Do a spoken command. Returns (what happened, ok)."""
+    voice_cancel()
+    if cmd == "stop":       # stop never moves anything: it works in dry run and with no page open too
+        await handle(VOICE, {"type": "stop"}); return "stopped", True
+    if HEAR.s["dry_run"]: return "dry run, not acted on", True
+    if not S.clients: return "refused: no page is open", False
+    if cmd == "follow":
+        if S.follow: return "already following", True
+        why = follow_on()
+        return ("following your finger", True) if S.follow else (f"refused: {why}", False)
+    # refused rather than queued: with Live off the target would wait, and the arm would jump when Live goes on
+    if not S.live: return "refused: Live is off", False
+    if S.pick_task and not S.pick_task.done(): S.pick_task.cancel()
+    follow_off(f'you said "{say}"', "info")
+    if cmd == "home":
+        await handle(VOICE, {"type": "home"}); return "going to the start pose", True
+    if cmd == "relax":
+        S.voice_task = asyncio.create_task(voice_relax()); return "folding to rest, then relaxing", True
+    return f"unknown command {cmd!r}", False
+
+async def voice_relax():
+    """'Dummy, relax': fold to the rest pose and only then go limp, so the arm never drops from mid-air.
+    STOP, any manual control or another spoken command cancels it while it folds."""
+    try:
+        await handle(VOICE, {"type": "rest"}); rest = [round(v, 1) for v in S.tgt[:4]]
+        arrived = await wait_arrived(timeout=15.0)
+        # Anything can happen during a fold (follow, a reconnect, Live off). Go limp only if the arm
+        # is still headed for, and at, exactly the rest pose it was sent to.
+        why = ("Live is off" if not S.live else "follow is on" if S.follow
+               else "voice was switched off" if HEAR.s["dry_run"] or HEAR.s["mode"] == "off"
+               else "the target changed" if [round(v, 1) for v in S.tgt[:4]] != rest
+               else "it did not reach the rest pose" if not arrived or max(abs(S.tgt[i] - S.cur[i]) for i in range(4)) > 1.0 else "")
+        if why:
+            log(f"Voice: not relaxing - {why}, so the arm stays engaged", "warn")
+            HEAR.sound("no"); return
+        await handle(VOICE, {"type": "relax", "mask": 63})
+        log("Voice: relaxed in the rest pose" + ("" if S.ser else " (no arm connected, nothing to relax)"), "ok")
+    except asyncio.CancelledError:
+        log("Voice: relax cancelled while folding - the arm stays engaged", "warn"); raise
+
+async def voice_event(ev):
+    if ev.get("kind") == "command":
+        if ev["cmd"] != "stop" and ev.get("gen") != HEAR.gen:   # STOP or a voice change since it was transcribed
+            ev["result"], ev["ok"] = "dropped: STOP or a voice change came first", False
+        else:
+            ev["result"], ev["ok"] = await voice_act(ev["cmd"], ev["say"])
+            HEAR.sound("ok" if ev["ok"] else "no")
+        log(f'Voice: "{ev.get("text", "")}" -> {ev["say"]}: {ev["result"]}', "ok" if ev["ok"] else "warn")
+    VOICEQ.append(ev)
+    await broadcast({"type": "voice_heard", "ev": ev})
+
+async def voice_clip(req):
+    try: b = HEAR.clip_wav(int(req.query.get("id", ""))) if HEAR is not None else None
+    except ValueError: b = None
+    return web.Response(body=b, content_type="audio/wav", headers=NOCACHE) if b else web.Response(status=404)
+
 def client_gone(c):
     S.clients.discard(c)
-    if not S.clients: S.unlock = False; S.creep = None; push_limits(); follow_off("no browser connected")
+    if not S.clients:
+        S.unlock = False; S.creep = None; push_limits(); follow_off("no browser connected")
+        voice_cancel(); S.voice_ptt = 0.0
+        if HEAR is not None: HEAR.ptt(False)
 
 async def ws_handler(req):
     ws = web.WebSocketResponse(); await ws.prepare(req); S.clients.add(ws)
     await ws.send_json({"type": "hello"})   # the log replay follows: the page drops what it already shows
     await ws.send_json({"type": "cfg", "cfg": S.cfg}); await ws.send_json(tool_from_tgt())
     for e in list(LOGQ): await ws.send_json(e)
+    for e in voice_replay(): await ws.send_json(e)
     async for msg in ws:
         if msg.type == WSMsgType.TEXT:
             try: await handle(ws, json.loads(msg.data))
@@ -944,7 +1090,7 @@ class PollClient:
         self.q = collections.deque(maxlen=1000); self.ev = asyncio.Event(); self.seen = time.time(); self.last = {}
     def push(self, msg):
         t = msg.get("type")
-        if t in ("state", "vision"):   # snapshots: a slow client only needs the newest, changed one
+        if t in ("state", "vision", "voice"):   # snapshots: a slow client only needs the newest, changed one
             snap = json.dumps(msg, default=str)   # a string: msg may hold lists that are later mutated in place
             if self.last.get(t) == snap: return   # unchanged: the long poll keeps waiting, nothing to re-render
             self.last[t] = snap
@@ -959,6 +1105,7 @@ def poll_client(req):
         c = POLL[cid] = PollClient(); S.clients.add(c)
         c.push({"type": "hello"}); c.push({"type": "cfg", "cfg": S.cfg}); c.push(tool_from_tgt())
         for e in list(LOGQ): c.push(e)
+        for e in voice_replay(): c.push(e)
     c.seen = time.time()
     return c
 
@@ -989,7 +1136,7 @@ NOCACHE = {"Cache-Control": "no-cache"}   # a kiosk browser that is never restar
 
 async def index(req):
     html = (HERE / "index.html").read_text(encoding="utf-8")
-    html = html.replace("</body>", '<script src="/cam_panel.js"></script></body>')
+    html = html.replace("</body>", '<script src="/cam_panel.js"></script><script src="/voice_panel.js"></script></body>')
     return web.Response(text=html, content_type="text/html", headers=NOCACHE)
 
 async def video(req):
@@ -1076,6 +1223,8 @@ def main():
     app.router.add_get("/video", video)
     app.router.add_get("/frame.jpg", frame)
     app.router.add_get("/vocab.json", vocab)
+    app.router.add_get("/voice_panel.js", lambda r: web.FileResponse(HERE / "voice_panel.js", headers=NOCACHE))
+    app.router.add_get("/voice_clip", voice_clip)
     app.router.add_get("/ws", ws_handler)
     app.router.add_get("/poll", poll_handler)
     app.router.add_post("/send", send_handler)
@@ -1083,7 +1232,10 @@ def main():
         app["loop"] = asyncio.create_task(control_loop())
         if S.port: app["rc"] = asyncio.create_task(reconnect_loop())
         if V is not None: V.start()
-    app.on_startup.append(start)
+        voice_boot()
+    async def stop(app):
+        if HEAR is not None: HEAR.shutdown()
+    app.on_startup.append(start); app.on_cleanup.append(stop)
     print(f"Open http://localhost:{a.http}")
     web.run_app(app, host="0.0.0.0", port=a.http, print=None)
 

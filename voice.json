@@ -1,0 +1,14 @@
+{
+  "mode": "off",
+  "mic": "",
+  "model": "small.en",
+  "wake_word": "dummy",
+  "vad_threshold": 0.5,
+  "end_silence": 0.5,
+  "awake_window": 5.0,
+  "dry_run": false,
+  "sounds": true,
+  "wake_aliases": [],
+  "phrase_aliases": {},
+  "noise_db": null
+}
