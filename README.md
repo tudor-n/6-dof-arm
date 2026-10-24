@@ -1,8 +1,49 @@
-# 6-DOF Robot Arm
+<p align="center"><img src="docs/brand/dummy-icon-dark.svg" width="96" alt="DUMMY"></p>
 
-A budget 6-DOF servo arm that picks objects off a table using a fixed overhead camera.
-An ESP32 drives the servos, a Python server does the kinematics and vision, and the
-operator works from a browser.
+<h1 align="center">DUMMY</h1>
+
+<p align="center"><b>A budget 6-DOF robot arm that picks things off the table, steered from a touchscreen.</b><br>
+Six MG996R servos, an ESP32, one overhead camera, and a lot of calibration.</p>
+
+![The arm UI: Move](docs/screenshots/move.png)
+
+## What it is
+
+DUMMY is a home-built servo arm on a workbench, with a camera looking down at the table. You drive it
+from a web page: from the laptop, or from an old Galaxy Tab propped up next to it.
+
+- **Move it by hand:** drag the arm's tip in the side view, turn the base on the dial, and roll and
+  open the gripper. Nothing moves until you switch **LIVE** on, and the big red **STOP** (or Esc) always wins.
+- **Tap the table to pick something up:** in the Camera tab, tap a spot on the live video, then
+  **HOVER**, **LOWER** or **PICK HERE**. Or type what to look for ("cup", "screwdriver"), let the
+  detector find it, and press **PICK**.
+- **Point with your finger:** with **Follow finger** on, the tool hovers over the spot your index
+  finger points at, and follows it around the table. Curl the finger and it stays put. **Low / Hover / High**
+  pick the hover height.
+- **Calibrate it properly:** a guided wizard takes each joint in turn (about ten minutes), so the
+  maths matches the real servos to within millimetres.
+
+![Guided calibration](docs/screenshots/calibrate.png)
+
+### The desktop app
+On the laptop, DUMMY is an app in the menu, with its own window and icon. It starts the arm's
+server, shows the UI, and stops the server again when you close the window. If the arm isn't
+plugged in it says so, and offers to open without it (simulated arm, camera and maths still work).
+Each start updates it to the latest `master` first, and your calibration survives the update.
+
+![The desktop app when the arm isn't plugged in](docs/screenshots/desktop-no-arm.png)
+
+### At the bench, with ATLAS
+The workbench tablet's home screen is shared with [ATLAS](https://github.com/tudor-n/atlas), the
+owner's notes-and-agents hub: **DUMMY** opens this arm UI, and the arm UI's **‹ HOME** goes back.
+While LIVE is on (or a grip button is held), HOME refuses to leave, so the arm is never left moving with no STOP on screen.
+
+![The tablet's home screen](docs/screenshots/atlas-tablet-home.png)
+
+## How it works
+
+An ESP32 drives the servos, a Python server does the kinematics and vision, and the operator works
+from a browser.
 
 ```
 browser  ──WebSocket/MJPEG──  server.py (IK, vision, pick logic)  ──USB serial──  ESP32  ──I2C──  PCA9685  ──PWM──  6x MG996R
@@ -15,11 +56,9 @@ arm's own coordinate frame were measured *by the arm*, and solves for where the 
 from those. Everything downstream - clicking a point, detecting an object, picking it -
 is a ray from the camera onto the fitted table plane, expressed in arm coordinates.
 
-The same camera can steer the arm by hand. With **Follow finger** on, point at the table and
-the tool hovers over the spot your index finger points at, following it as far as the arm can
-reach. Curl the finger and it stays put. It's for quick positioning, not precision. The
-**Low / Hover / High** buttons under it pick the hover height: tap for a preset, hold Low or
-High to go as low or as high as the arm reaches.
+The same camera steers the arm in **Follow finger**: MediaPipe finds the hand, and the ray along
+the index finger meets the table where the tool should hover. It's for quick positioning, not
+precision.
 
 ## Documentation
 
@@ -93,7 +132,8 @@ the table reasonably reliably.
 | Arm kinematics | All four joints calibrated. ~11 mm at table height (cross-validated) |
 | Grasp depth | Still being tuned |
 | Tool model | Along-axis length fitted; off-axis offsets unmeasured |
-| Finger follow | New. Tested offline only; not yet tried on the arm |
+| Finger follow | Works on the real arm (2026-10-24). The Low / Hover / High buttons are new and not yet tried on hardware |
+| Desktop app | DUMMY in the launcher, self-updating from master (2026-10-24). Not yet tried with the arm plugged in |
 
 The remaining errors are millimetres rather than centimetres. Getting from "works most of the
 time" to "works every time" is what [docs/ROADMAP.md](docs/ROADMAP.md) tracks - it also records
