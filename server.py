@@ -9,6 +9,7 @@
 import argparse, asyncio, collections, copy, json, math, sys, time
 from pathlib import Path
 from aiohttp import web, WSMsgType
+import gestures
 try:
     import serial, serial.tools.list_ports
 except ImportError:
@@ -309,7 +310,12 @@ class S:
     follow_kind = ''   # the server's own condition inside a state: '', 'paused', 'reach', 'clamped'
     follow_nudge = None   # (dir, deadline) while Low / High is held; the client resends every 100 ms
     follow_hlimit = ''    # 'highest' / 'lowest' while a held Low / High has hit the end of the reach
-    voice_task = None     # a spoken relax folding the arm to rest before it goes limp
+    voice_task = None     # a spoken relax folding the arm to rest, or a gesture (gestures.py)
+    limp = 0x3F           # channels with PWM cut, as the firmware has them: it boots limp, R sets it, a move wakes one
+    gesture = None        # the running gesture's token: the control loop steps linearly at gesture_speed meanwhile
+    gesture_home = None   # the pose it started from and returns to
+    gesture_speed = 120.0
+    gesture_last = ""     # what the last gesture did, for the Personality page
     voice_ptt = 0.0       # push-to-talk deadline while the Voice tab's button is held; the client resends every 100 ms
 
 V = None   # Vision instance (or None when the camera is off)
@@ -465,9 +471,11 @@ async def pick_seq(x, y, closing):
 # an allowlist, because a list of the dangerous ones goes stale silently. Relax, creep, flip or
 # set-zero during follow would have the next finger move wake a limp servo under the operator's
 # hand, or solve with a mirrored joint. unlock and live are safe only when switching OFF.
-# The Voice tab's own messages never move the arm (a spoken command arrives as its own message).
+# The Voice tab's own messages never move the arm (a spoken command arrives as its own message), and a
+# gesture pauses follow's writes and comes back to where it started.
 FOLLOW_SAFE = frozenset(("follow", "follow_z", "speed", "client", "resync", "vset", "detect", "cam_click",
-                         "pose_lock", "grip", "roll", "jaws", "voice_set", "voice_ptt", "voice_train", "voice_mics"))
+                         "pose_lock", "grip", "roll", "jaws", "voice_set", "voice_ptt", "voice_train", "voice_mics",
+                         "gesture"))
 FOLLOW_HOVER = (20.0, 400.0)   # mm above the table; a held Low / High also stops where the arm can't reach
 # The height buttons under Follow finger: a tap loads one of these, holding Low / High moves
 # the height down / up from wherever it is at FOLLOW_NUDGE_MMS, as far as the arm reaches.
@@ -593,7 +601,8 @@ def follow_tick(now):
         if out.target is None: kind = ""
         elif S.follow_pending and S.follow_kind == "reach": kind = "reach"   # still waiting to be reachable
         else: kind = "clamped" if S.follow_clamped else ""
-        if out.target is not None and S.follow_pending and now - S.follow_last_write >= 0.05:
+        # a gesture pauses the writes; the target stays pending and is written once it is over
+        if out.target is not None and S.follow_pending and now - S.follow_last_write >= 0.05 and not S.gesture:
             x, y = out.target
             # never anything derived from the finger: a fixed hover, so the arm cannot come down into the hand
             z = V.table_z(x, y) + follow_hover()
@@ -657,6 +666,7 @@ def serial_send(angles):
         except Exception: pass
         S.ser = None; S.live = False
         follow_off("serial link lost")
+        voice_cancel()      # a gesture or relax fold must not carry on, and move, once Live is back
 
 async def reconnect_loop():
     while True:
@@ -706,12 +716,14 @@ async def control_loop():
         if S.live:
             max_dist = max(abs(S.tgt[i] - S.cur[i]) for i in range(6))
             if max_dist > 0.1:
+              spd = S.gesture_speed if S.gesture else S.speed
               for i in range(6):
                 dist = S.tgt[i] - S.cur[i]
-                joint_speed_limit = (S.speed * dt) * (abs(dist) / max_dist)
+                joint_speed_limit = (spd * dt) * (abs(dist) / max_dist)
 
-                # Gripper (5) gets no decay smoothing - strictly bound by speed slider
-                if i == 5:
+                # Gripper (5) gets no decay smoothing - strictly bound by speed slider. Nor does a
+                # gesture: linear at its own speed, so its keyframes land on time.
+                if i == 5 or S.gesture:
                     step = clamp(dist, -joint_speed_limit, joint_speed_limit)
                 else:
                     step = clamp(dist * 6.0 * dt, -joint_speed_limit, joint_speed_limit)
@@ -721,6 +733,9 @@ async def control_loop():
                 else:
                     S.cur[i] += step
             if last_sent != S.cur:
+                if last_sent is not None:   # the firmware wakes a limp channel as soon as it is moved
+                    for i in range(6):
+                        if abs(S.cur[i] - last_sent[i]) > 0.05: S.limp &= ~(1 << i)
                 serial_send(S.cur)
                 last_sent = list(S.cur)
         if V is not None:   # feed the camera overlay with where the arm thinks its tip is
@@ -743,7 +758,7 @@ async def control_loop():
                                         "preset": follow_preset() if V is not None else "",
                                         "hlimit": S.follow_hlimit}}))
         if tick % 6 == 3 and S.clients and HEAR is not None:
-            try: vs = HEAR.status()
+            try: vs = voice_status()
             except Exception as e: vs = None; print("voice status:", e)   # never let voice stop the control loop
             if vs: await broadcast(vs)
         if tick % 10 == 0 and S.clients and V is not None:
@@ -827,12 +842,14 @@ async def handle(ws, m):
         S.tool = tool_from_tgt(); await broadcast(S.tool)
         await broadcast({"type": "restinfo", "servo": S.tgt[:5] + [S.tgt[5]], "clipped": clipped})
     elif t == "relax":
+        S.limp = int(m["mask"]) & 63
         if S.ser:
-            try: S.ser.write(f"R {int(m['mask']) & 63}\n".encode()); S.engaged = True
+            try: S.ser.write(f"R {S.limp}\n".encode()); S.engaged = True
             except Exception as e: print("serial error:", e)
     elif t == "live":
         S.live = bool(m["on"])
         log("Live " + ("ON" if S.live else "OFF"), "ok" if S.live else "warn")
+        if S.live: S.limp = 0           # R 0 below (with no arm there is nothing limp to model)
         if S.live and S.ser:
             try: S.ser.write(b"R 0\n"); S.engaged = True; push_limits()
             except Exception as e: print("serial error:", e)
@@ -863,6 +880,10 @@ async def handle(ws, m):
         if m.get("on"): follow_on()
         else: follow_off("switched off", "info")
     elif t in VOICE_MSGS: await voice_msg(t, m)
+    elif t == "gesture":       # the Personality page's Try buttons
+        if m.get("name") in gestures.GESTURES:
+            r, ok = await voice_gesture(m["name"])
+            log(f"Gesture: {r}", "ok" if ok else "warn")
     elif V is None and t in ("cam_click", "goto_click", "pick_click", "pick_detected", "vset", "detect", "pose_lock", "follow_z",
                              "marker_record", "marker_apply", "marker_reset", "marker_tape",
                              "roll_zero", "roll_flip", "jaws"):
@@ -979,10 +1000,16 @@ def voice_from_thread(ev):
         task = asyncio.ensure_future(voice_event(ev)); _VOICE_BG.add(task); task.add_done_callback(_VOICE_BG.discard)
     if LOOP is not None: LOOP.call_soon_threadsafe(go)
 
-def voice_replay(): return ([HEAR.status()] + [{"type": "voice_heard", "ev": e} for e in VOICEQ]) if HEAR is not None else []
+def voice_status():
+    vs = HEAR.status(); vs["gesture"] = {"on": bool(S.gesture), "last": S.gesture_last}
+    return vs
+
+def voice_replay(): return ([voice_status()] + [{"type": "voice_heard", "ev": e} for e in VOICEQ]) if HEAR is not None else []
 
 def voice_cancel():
-    if S.voice_task and not S.voice_task.done(): S.voice_task.cancel()
+    try: me = asyncio.current_task()
+    except RuntimeError: me = None
+    if S.voice_task and not S.voice_task.done() and S.voice_task is not me: S.voice_task.cancel()
 
 async def voice_msg(t, m):
     if HEAR is None: log("Voice is not available: hearing.py did not load (see the server console).", "err"); return
@@ -1004,11 +1031,13 @@ async def voice_msg(t, m):
 
 async def voice_act(cmd, say):
     """Do a spoken command. Returns (what happened, ok)."""
-    voice_cancel()
     if cmd == "stop":       # stop never moves anything: it works in dry run and with no page open too
-        await handle(VOICE, {"type": "stop"}); return "stopped", True
+        voice_cancel(); await handle(VOICE, {"type": "stop"}); return "stopped", True
     if HEAR.s["dry_run"]: return "dry run, not acted on", True
     if not S.clients: return "refused: no page is open", False
+    # a reaction cancels what is running only if it will really move, and never a relax fold
+    if cmd in GESTURE_FOR: return await voice_gesture(GESTURE_FOR[cmd], spoken=True)
+    voice_cancel()
     if cmd == "follow":
         if S.follow: return "already following", True
         why = follow_on()
@@ -1049,10 +1078,91 @@ async def voice_event(ev):
             ev["result"], ev["ok"] = "dropped: STOP or a voice change came first", False
         else:
             ev["result"], ev["ok"] = await voice_act(ev["cmd"], ev["say"])
-            HEAR.sound("ok" if ev["ok"] else "no")
+            # a reaction makes its own sound whether or not the arm could move with it
+            snd = {"yes": "ok", "no": "nope", "praise": "happy"}.get(ev["cmd"]) if HEAR.s["personality"] else None
+            HEAR.sound(snd or ("ok" if ev["ok"] else "no"))
         log(f'Voice: "{ev.get("text", "")}" -> {ev["say"]}: {ev["result"]}', "ok" if ev["ok"] else "warn")
+    elif ev.get("kind") == "wake" and ev.get("source") == "vad" and HEAR.s["personality"] and ev.get("gen") == HEAR.gen \
+            and not (S.voice_task and not S.voice_task.done()):
+        # A bare "Dummy" gets a nod (Hearing already chimed). Never over a relax fold or another gesture.
+        ev["result"], ev["ok"] = ("dry run: would nod", True) if HEAR.s["dry_run"] \
+            else ("no page is open", False) if not S.clients else await voice_gesture("nod")
     VOICEQ.append(ev)
     await broadcast({"type": "voice_heard", "ev": ev})
+
+# ---------------- personality: nod, shake, happy dance ----------------
+# gestures.py has the choreography; here it meets the arm. A gesture is small, planned from wherever
+# the arm is, checked against the joint limits and the table before it moves, and comes back to where
+# it started. It runs as S.voice_task, so STOP, manual control, another spoken command, follow
+# switching on and voice going off all cancel it, like a spoken relax.
+GESTURE_FOR = {"yes": "nod", "no": "shake", "praise": "dance"}   # spoken reaction -> gesture
+
+def gesture_check():
+    """Why no gesture can move the arm now, or ''."""
+    if HEAR is not None and not HEAR.s["personality"]: return "personality is off"
+    if not S.live: return "Live is off"
+    if S.pick_task and not S.pick_task.done(): return "a pick is running"
+    # A limp arm joint: a gesture would wake only the ones it moves and wag them on a limp arm.
+    if S.limp & 0x0F: return "the arm is relaxed (Start pose or Wake all first)"
+    return ""
+
+def plan_gesture(name, home):
+    tip = fk(home, S.cfg)[0][-1]
+    floor = (V.table_z(tip[0], tip[1]) if V is not None else 5.0) + gestures.FLOOR_MM
+    size = HEAR.s["gesture_size"] if HEAR is not None else 1.0
+    clap = HEAR.s["dance_clap"] if HEAR is not None else True
+    return gestures.plan(name, home, S.cfg["joints"], lambda s: fk(s, S.cfg)[0][-1][2], floor, size, clap), size
+
+async def voice_gesture(name, spoken=False):
+    """Plan one gesture and start it as the voice task. Returns (what happened, ok). Everything is
+    checked and planned first: what is running is cancelled only if the new gesture will really move.
+    A spoken one never interrupts a relax fold (the Try buttons, being manual control, do)."""
+    verb = gestures.VERB[name]
+    def no(text): S.gesture_last = text; return text, False
+    why = gesture_check()
+    if why: return no(f"didn't {verb}: {why}")
+    if spoken and S.voice_task and not S.voice_task.done() and not S.gesture: return no(f"didn't {verb}: busy relaxing")
+    # Planned from the target, so the arm must be there: the rest of an unfinished move would run at
+    # gesture speed along a path nobody checked. Mid-gesture is fine: it hands over its start pose.
+    if not S.gesture and max(abs(S.tgt[i] - S.cur[i]) for i in range(5)) > 1.0: return no(f"didn't {verb}: the arm is still moving")
+    home = list(S.gesture_home) if S.gesture and S.gesture_home else list(S.tgt)   # so both end where the first began
+    (steps, scale, why), size = plan_gesture(name, home)
+    if steps is None: return no(f"no room to {verb} here ({why})")
+    voice_cancel()
+    S.gesture_speed = HEAR.s["gesture_speed"] if HEAR is not None else 120.0
+    # Wake what this gesture moves of roll and gripper (they hold nothing up, and a start pose after a
+    # relax never moves them), nothing else; the 360 gripper braked first, so it can't wake up driving.
+    used = {i for _, t in steps for i in (4,) if abs(t[i] - home[i]) > 1e-6} | ({5} if steps[0][1][5] is not None else set())
+    wake = S.limp & sum(1 << i for i in used)
+    if wake:
+        if wake & 0x20: S.tgt[5] = S.cur[5] = 90.0
+        S.limp &= ~wake
+        if S.ser:
+            try: S.ser.write(f"R {S.limp}\n".encode())
+            except Exception as e: print("serial error:", e)
+    S.voice_task = asyncio.create_task(run_gesture(steps, home))
+    S.gesture_last = gestures.DONE[name] + ("" if scale >= size - 1e-6 else f" (at {round(100 * scale / size)}%: {why or 'tight here'})")
+    return S.gesture_last, True
+
+async def run_gesture(steps, home):
+    token = object(); S.gesture, S.gesture_home = token, list(home)
+    grips = any(t[5] is not None for _, t in steps)
+    try:
+        for secs, tgt in steps:
+            S.tgt[:5] = tgt[:5]
+            if tgt[5] is not None: S.tgt[5] = tgt[5]
+            t0 = time.time()    # the seconds are a minimum: wait for the keyframe to arrive too (capped)
+            while True:
+                await asyncio.sleep(0.02)
+                if not S.live:      # Live off or the serial link lost: stop here, never queue the rest
+                    S.gesture_last = "stopped: Live went off"; return
+                el = time.time() - t0
+                if el >= secs and (max(abs(S.tgt[i] - S.cur[i]) for i in range(5)) < 1.0 or el > 3 * secs + 0.5): break
+    finally:
+        # The dead-man rule for the 360 gripper, however this ends: braked, like pick_seq. Cancelled
+        # (STOP, another command), the arm stays where it is; finished, the last keyframe was home.
+        if grips: S.tgt[5] = S.cur[5] = 90.0
+        if S.gesture is token: S.gesture, S.gesture_home = None, None
 
 async def voice_clip(req):
     try: b = HEAR.clip_wav(int(req.query.get("id", ""))) if HEAR is not None else None

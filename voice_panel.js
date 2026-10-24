@@ -84,6 +84,7 @@
     ' <div class="x pl" data-a="vpage" data-p="heard" style="left:16px;top:10px;width:120px">Heard</div>',
     ' <div class="x pl" data-a="vpage" data-p="cal" style="left:142px;top:10px;width:120px">Calibrate</div>',
     ' <div class="x pl" data-a="vpage" data-p="set" style="left:268px;top:10px;width:120px">Settings</div>',
+    ' <div class="x pl" data-a="vpage" data-p="per" style="left:394px;top:10px;width:120px">Personality</div>',
     ' <div id="vclr" class="x tl" data-a="vclr" style="right:16px;top:10px;height:44px;line-height:44px;padding:0 4px">Clear</div>',
     // heard
     ' <div id="vpgheard" class="x" style="left:0;top:64px;width:664px;height:408px">',
@@ -126,12 +127,16 @@
   var SLD = [['vad_threshold', 'Speech threshold', 'lower hears quieter speech, higher ignores more noise', 0.3, 0.9, 0.05, 2, ''],
     ['end_silence', 'Pause before acting', 'the quiet that ends what you said', 0.3, 1.2, 0.05, 2, ' s'],
     ['awake_window', 'Listen after the name', 'after just the name, how long it waits', 2, 10, 1, 0, ' s']];
+  // the Personality page's two, the same way: the slider works in its own units, the server gets value / s[8]
+  var PSLD = [['gesture_size', 'Size', 'how big the gestures are', 50, 150, 10, 0, '%', 100],
+    ['gesture_speed', 'Gesture speed', 'whatever the speed slider says', 60, 180, 10, 0, ' \u00b0/s', 1]];
   function sv(s, v) { return (+v).toFixed(s[6]) + s[7]; }
-  each(SLD, function (s, i) {
-    var t = 4 + i * 74;
-    h.push('<div class="x sl2" style="left:16px;top:' + t + 'px;width:200px;font-size:14px;line-height:18px;color:#fff">' + s[1] + '<br><span class="f" style="font-size:11px;line-height:14px">' + s[2] + '</span></div>' +
-      A.hSliderHTML('vs_' + s[0], 228, t - 6, 330) + '<div id="vsv_' + s[0] + '" class="x m" style="left:568px;top:' + (t + 10) + 'px;width:80px;font-size:16px;line-height:20px;text-align:right"></div>');
-  });
+  function sliderHTML(s, t) {
+    return '<div class="x sl2" style="left:16px;top:' + t + 'px;width:200px;font-size:14px;line-height:18px;color:#fff">' + s[1] + '<br><span class="f" style="font-size:11px;line-height:14px">' + s[2] + '</span></div>' +
+      A.hSliderHTML('vs_' + s[0], 228, t - 6, 330) + '<div id="vsv_' + s[0] + '" class="x m" style="left:568px;top:' + (t + 10) + 'px;width:80px;font-size:16px;line-height:20px;text-align:right"></div>';
+  }
+  function perSliders() { var o = ''; each(PSLD, function (s, i) { o += sliderHTML(s, 128 + i * 64); }); return o; }
+  each(SLD, function (s, i) { h.push(sliderHTML(s, 4 + i * 74)); });
   h.push('  <div class="x sl2" style="left:16px;top:232px;width:200px;font-size:14px;line-height:18px;color:#fff">Speech model<br><span class="f" style="font-size:11px;line-height:14px">small is quick and plenty for commands</span></div>',
     '  <div class="x pl" data-a="vmodel" data-v="small.en" style="left:228px;top:228px;width:104px">Small</div>',
     '  <div class="x pl" data-a="vmodel" data-v="medium.en" style="left:338px;top:228px;width:104px">Medium</div>',
@@ -139,6 +144,18 @@
     '  <div class="x lb" style="left:16px;top:300px">Learned from your voice</div>',
     '  <div id="vforall" class="x tl" data-a="vforall" style="right:16px;top:286px;height:40px;line-height:40px">Forget all</div>',
     '  <div id="vlearn" class="x" style="left:16px;top:322px;width:632px;height:84px;overflow:hidden"></div>',
+    ' </div>',
+    // personality: nod, shake, dance (gestures.py; the server runs them)
+    ' <div id="vpgper" class="x" style="left:0;top:64px;width:664px;height:408px;display:none">',
+    '  <div id="vper" class="x vrow" data-a="vper" style="left:16px;top:2px;width:300px"><span class="vrl">Personality</span><span class="vrh" style="left:104px">nod · shake · dance</span><span class="sw s2" style="right:0;top:9px"><i></i></span></div>',
+    '  <div id="vclap" class="x vrow" data-a="vclap" style="left:348px;top:2px;width:300px"><span class="vrl">Gripper clap</span><span class="vrh" style="left:112px">in the dance</span><span class="sw s2" style="right:0;top:9px"><i></i></span></div>',
+    '  <div class="x lb" style="left:16px;top:66px">Try</div>',
+    '  ' + B('', 'vgest', 60, 52, 120, 'Nod', ' data-g="nod"') + B('', 'vgest', 188, 52, 120, 'Shake', ' data-g="shake"') + B('', 'vgest', 316, 52, 120, 'Dance', ' data-g="dance"'),
+    '  <div id="vglast" class="x vcv" style="left:452px;top:54px;width:196px;height:44px;font-size:13px;line-height:22px;overflow:hidden"></div>',
+    perSliders(),
+    '  <div class="x lb" style="left:16px;top:250px">What he reacts to</div>',
+    '  <div id="vreact" class="x" style="left:16px;top:268px;width:632px;font-size:14px;line-height:22px"></div>',
+    '  <div class="x f" style="left:16px;top:362px;width:632px;font-size:12px;line-height:16px">Needs Live on. Each gesture is small, starts from wherever the arm is and comes back to it, and shrinks or is skipped near the table or a joint limit. STOP ends it where it is.</div>',
     ' </div>',
     '</div>',
     // microphone picker, over the whole tab
@@ -172,10 +189,13 @@
   act('vmicsel', { tap: function (e) { set('mic', e.getAttribute('data-id')); micPick(false); } });
   // the server's values move the sliders too (Slider.set ignores them while a finger drags)
   var SL = {};
-  each(SLD, function (s) {
+  each(SLD.concat(PSLD), function (s) {
     SL[s[0]] = A.Slider($('vs_' + s[0]), { size: 330, thumb: 32, min: s[3], max: s[4], step: s[5],
-      onInput: function (v) { txt($('vsv_' + s[0]), sv(s, v)); }, onEnd: function (v) { set(s[0], v); } });
+      onInput: function (v) { txt($('vsv_' + s[0]), sv(s, v)); }, onEnd: function (v) { set(s[0], v / (s[8] || 1)); } });
   });
+  act('vper', { tap: function () { set('personality', !(VS && VS.settings.personality)); } });
+  act('vclap', { tap: function () { set('dance_clap', !(VS && VS.settings.dance_clap)); } });
+  act('vgest', { tap: function (e) { send({ type: 'gesture', name: e.getAttribute('data-g') }); } });
   // push to talk: resent every 100 ms while held, like creep, so a lost release ends it after the server's 0.4 s
   var pttRep = null;
   function pttDown() { if (pttRep) return; send({ type: 'voice_ptt', on: true }); pttRep = setInterval(function () { send({ type: 'voice_ptt', on: true }); }, 100); }
@@ -234,8 +254,8 @@
   // one line per event: what was said, then what it meant / did
   function line(ev) {
     var k = ev.kind, src = ev.source == 'ptt' ? 'push to talk · ' : '', ww = q(wakeWord());
-    if (k == 'command') return [ev.ok ? 'g' : 'a', src + ev.say.toUpperCase() + ' ' + A.RARR + ' ' + ev.result];
-    if (k == 'wake') return ['a', ww + ' ' + A.RARR + ' listening for the command'];
+    if (k == 'command') return [ev.ok ? 'g' : 'a', src + (ev.cmd == 'yes' ? 'answer: yes' : ev.cmd == 'no' ? 'answer: no' : ev.say).toUpperCase() + ' ' + A.RARR + ' ' + ev.result];
+    if (k == 'wake') return ['a', ww + ' ' + A.RARR + ' listening for the command' + (ev.result ? ' · ' + ev.result : '')];
     if (k == 'nowake') return ['', 'no ' + ww + ' first: ignored'];
     if (k == 'unknown') return [ev.wake || ev.source == 'ptt' ? 'a' : '', src + 'not a command'];
     if (k == 'noise') return ['', 'noise, not speech: ignored'];
@@ -316,6 +336,21 @@
     html($('vlearn'), any ? o : '<div class="f" style="font-size:13px;line-height:18px">Nothing yet. Calibrate ' + A.RARR + ' Your voice teaches it how Whisper hears you.</div>');
     show($('vforall'), any);
   }
+  var REACT = [['Dummy', 'nods, then listens for the command'],
+    ['Dummy, good boy', 'a happy dance (also: good job, well done, good robot)'],
+    ['Dummy, are you dumb?', 'shakes his head (also: stupid, an idiot, broken, useless)'],
+    ['Dummy, are you awake?', 'nods (also: ready, listening, there, can you hear me)']];
+  function renderPer() {
+    var cf = VS && VS.settings; if (!cf) return;
+    tog($('vper'), 'on', !!cf.personality); tog($('vclap'), 'on', !!cf.dance_clap);
+    each(view.querySelectorAll('[data-a=vgest]'), function (e) { tog(e, 'dis', !cf.personality); });
+    each(PSLD, function (s) { SL[s[0]].set(cf[s[0]] * s[8]); if (SL[s[0]].drag == null) txt($('vsv_' + s[0]), sv(s, cf[s[0]] * s[8])); });
+    var g = VS.gesture || {}, last = g.on ? 'moving...' : g.last || '';
+    txt($('vglast'), last); A.cls($('vglast'), 'x vcv' + (g.on ? '' : /^(didn't|no room)/.test(last) ? ' a' : last ? ' g' : ''));
+    var ww = wakeWord(), o = '';
+    each(REACT, function (r) { o += '<div><b>' + esc(q(r[0].replace('Dummy', ww))) + '</b> <span class="d">' + A.RARR + ' ' + esc(r[1]) + '</span></div>'; });
+    html($('vreact'), o);
+  }
   function renderMics() {
     if (!VS) return;
     var k = JSON.stringify(VS.mics) + '|' + VS.settings.mic; if (k === mKey) return; mKey = k;
@@ -337,11 +372,13 @@
     if (A.tab() != 'voice') return;
     dirty = false;
     each(view.querySelectorAll('[data-a=vpage]'), function (e) { tog(e, 'on', e.getAttribute('data-p') == page); });
-    show($('vpgheard'), page == 'heard'); show($('vpgcal'), page == 'cal'); show($('vpgset'), page == 'set'); show($('vclr'), page == 'heard');
+    show($('vpgheard'), page == 'heard'); show($('vpgcal'), page == 'cal'); show($('vpgset'), page == 'set'); show($('vpgper'), page == 'per');
+    show($('vclr'), page == 'heard');
     renderLeft();
     if (micOpen) renderMics();
     if (page == 'heard') renderHeard();
     else if (page == 'cal') renderCal();
-    else renderSet();
+    else if (page == 'set') renderSet();
+    else renderPer();
   });
 })();

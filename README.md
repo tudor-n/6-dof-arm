@@ -24,6 +24,9 @@ from a web page: from the laptop, or from an old Galaxy Tab propped up next to i
   your finger), *"Dummy, start pose"*, *"Dummy, relax"* (fold to rest, then go limp) or *"Dummy,
   stop"*. **Push to talk** (hold the button, or V on a keyboard) is there for testing. A two-minute
   calibration on the same tab tunes it to your mic, your room and your voice.
+- **It has a personality:** say just *"Dummy"* and he nods, *"Dummy, are you dumb?"* and he shakes
+  his head, *"Dummy, good boy"* and he dances. Gestures are small, checked against the joint limits and
+  the table first, and always end where they started.
 - **Calibrate it properly:** a guided wizard takes each joint in turn (about ten minutes), so the
   maths matches the real servos to within millimetres.
 
@@ -95,6 +98,7 @@ python server.py --camera 1 --http 8080
 python test_geometry.py                # offline maths tests, no hardware needed
 python test_finger.py                  # offline finger-follow tests
 python test_voice.py                   # offline voice tests
+python test_gestures.py                # offline personality tests
 ```
 
 `ultralytics` (Detect), `mediapipe` (Follow finger) and `faster-whisper` (Voice) are optional:
@@ -116,6 +120,7 @@ gripper.
 | `hearing.py` | Voice: mic, speech detection, Whisper, and turning what was said into a command. Knows nothing about the arm |
 | `voice_panel.js` | Voice tab, injected like the Camera tab |
 | `voice.json` | Voice settings and what calibration learned about your voice |
+| `gestures.py` | Personality: the nod, shake and dance choreography and its planner. Knows nothing about the arm |
 | `index.html` | Move and Calibrate tabs; the canvas arm views and the calibration wizard |
 | `src/main.c` | ESP32 firmware. A deliberately dumb executor - see HARDWARE.md |
 | `config.json` | Link lengths, joint zero/sign/limits, tool offsets |
@@ -126,6 +131,7 @@ gripper.
 | `test_geometry.py` | Offline tests for the pose and kinematics maths |
 | `test_finger.py` | Offline tests for pointing detection and the follow state machine |
 | `test_voice.py` | Offline tests for the voice matcher, segmenter and calibration |
+| `test_gestures.py` | Offline tests for gesture planning and how the server runs gestures |
 | `desktop/` | DUMMY, the desktop app: a Tauri window around the UI, and the launcher that installs and updates it |
 | `docs/brand/` | The DUMMY logo: marks and launcher tiles (dark and light) |
 
@@ -144,6 +150,7 @@ the table reasonably reliably.
 | Finger follow | Works on the real arm (2026-10-24). The Low / Hover / High buttons are new and not yet tried on hardware |
 | Desktop app | DUMMY in the launcher, self-updating from master (2026-10-24). Not yet tried with the arm plugged in |
 | Voice | New. Tested with synthetic speech (340 clips, no wrong actions) and the webcam mic, not yet with a person talking to the arm |
+| Personality | New. Nod, shake, dance, tested against the control loop and with synthetic speech, not yet on the real arm |
 
 The remaining errors are millimetres rather than centimetres. Getting from "works most of the
 time" to "works every time" is what [docs/ROADMAP.md](docs/ROADMAP.md) tracks - it also records

@@ -27,8 +27,17 @@ COMMANDS = {
     "home": ("start pose", "start position", "starting pose", "starting position", "go to start", "start", "go home", "home"),
     "relax": ("relax", "relax all", "go limp", "go to sleep", "sleep"),
     "stop": ("stop", "halt", "freeze", "stop following", "stay", "hold it"),
+    # personality (gestures.py): a question he answers yes with a nod, one he answers no to, praise
+    "yes": ("are you awake", "are you there", "are you listening", "are you ready", "can you hear me"),
+    "no": ("are you dumb", "are you stupid", "are you an idiot", "are you broken", "are you useless",
+           "are you a bad robot", "you're dumb", "you are dumb", "you're stupid", "you are stupid",
+           "you dumb", "you stupid", "you idiot"),
+    "praise": ("good boy", "who's a good boy", "good job", "well done", "good robot"),
 }
-SAY = {"follow": "come here", "home": "start pose", "relax": "relax", "stop": "stop"}   # what the Voice tab shows
+SAY = {"follow": "come here", "home": "start pose", "relax": "relax", "stop": "stop",   # what the Voice tab shows
+       "yes": "a yes question", "no": "a no question", "praise": "good boy"}
+REACTIONS = ("yes", "no", "praise")     # commands that are body language, not tasks
+NEGATIONS = frozenset(("not", "never"))
 FILLER = frozenset("please now uh um er hey ok okay so the to go and a an your you can could would just".split())
 MODELS = ("small.en", "medium.en", "large-v3-turbo")
 
@@ -50,6 +59,11 @@ DEFAULTS = {
     "wake_aliases": [],      # learned: other ways Whisper writes the wake word for this voice
     "phrase_aliases": {},    # learned: command id -> other ways it writes that command
     "noise_db": None,        # from the last quiet-room check
+    "personality": True,     # nod / shake / dance (gestures.py)
+    "gesture_size": 1.0,     # gesture amplitude, x the choreography
+    "gesture_speed": 120.0,  # deg/s while gesturing, whatever the speed slider says
+    "dance_clap": True,      # the gripper claps in the dance
+    "reactions": {},         # your own extra phrases: {"yes" / "no" / "praise": [...]}
 }
 
 
@@ -59,6 +73,9 @@ def normalize(text):
 
 
 def _core(words): return [w for w in words if w not in FILLER]
+
+
+def _negated(words): return any(w in NEGATIONS or w.endswith("n't") for w in words)
 
 
 def sim(a, b): return difflib.SequenceMatcher(None, a, b).ratio()
@@ -91,9 +108,11 @@ class Matcher:
         return None
 
     def scores(self, words):
-        """Best similarity of the filler-free words to each command's phrases."""
-        core = " ".join(_core(words))
-        return {c: max((1.0 if core == p else sim(core, p)) for p in ps) for c, ps in self.phrases.items()} if core else {}
+        """Best similarity of the filler-free words to each command's phrases. A not / never / n't the
+        phrase itself lacks rules it out: "you're not dumb" is no insult, "don't relax" no command."""
+        cw = _core(words); core = " ".join(cw); neg = _negated(cw)
+        def score(p): return 0.0 if neg and not _negated(p.split()) else 1.0 if core == p else sim(core, p)
+        return {c: max(score(p) for p in ps) for c, ps in self.phrases.items()} if core else {}
 
     def match_command(self, words):
         """(command or None, best score, margin over the runner-up command)."""
@@ -449,7 +468,9 @@ def _tone(parts, vol=0.22):
 
 SOUNDS = {"wake": [(660, 70), (0, 25), (990, 90)],    # heard the name: say the command
           "ok": [(880, 60), (0, 20), (1320, 80)],     # done
-          "no": [(300, 110), (0, 40), (220, 160)]}    # heard you, but refused or not understood
+          "no": [(300, 110), (0, 40), (220, 160)],    # heard you, but refused or not understood
+          "nope": [(392, 150), (0, 70), (330, 240)],  # "uh-uh", with the head shake
+          "happy": [(523, 90), (0, 20), (659, 90), (0, 20), (784, 90), (0, 20), (1047, 110), (0, 40), (784, 80), (0, 20), (1047, 220)]}
 
 
 class Sounds:
@@ -513,7 +534,9 @@ class Hearing:
         return True, ""
 
     def _matcher(self):
-        return Matcher(self.s["wake_word"], self.s["wake_aliases"], self.s["phrase_aliases"])
+        extra = {c: list(self.s["phrase_aliases"].get(c, [])) + list(self.s["reactions"].get(c, []))
+                 for c in set(self.s["phrase_aliases"]) | set(self.s["reactions"])}
+        return Matcher(self.s["wake_word"], self.s["wake_aliases"], extra)
 
     def set(self, key, value):
         """Change one setting from the Voice tab. Returns an error string, or '' when applied."""
@@ -529,7 +552,10 @@ class Hearing:
         elif key in ("vad_threshold", "end_silence", "awake_window"):
             lo, hi = {"vad_threshold": (0.2, 0.95), "end_silence": (0.2, 1.5), "awake_window": (1.0, 15.0)}[key]
             s[key] = round(max(lo, min(hi, float(value))), 2)
-        elif key in ("dry_run", "sounds"): s[key] = bool(value)
+        elif key in ("gesture_size", "gesture_speed"):
+            lo, hi = {"gesture_size": (0.5, 1.5), "gesture_speed": (60.0, 180.0)}[key]
+            s[key] = round(max(lo, min(hi, float(value))), 2)
+        elif key in ("dry_run", "sounds", "personality", "dance_clap"): s[key] = bool(value)
         elif key == "forget":       # a learned alias: ["wake", text] or [command, text]
             kind, text = value
             if kind == "wake": s["wake_aliases"] = [a for a in s["wake_aliases"] if a != text]
@@ -727,8 +753,9 @@ class Hearing:
                 "quiet": {"on": True, "left": round(max(0.0, q["until"] - time.time()), 1), "secs": q["secs"]} if q else None,
                 "quiet_result": self.quiet_result,
                 "settings": {k: s[k] for k in ("mic", "model", "wake_word", "vad_threshold", "end_silence", "awake_window",
-                                                "dry_run", "sounds", "wake_aliases", "phrase_aliases")},
-                "commands": [[c, SAY[c]] for c in Trainer.ORDER], "models": list(MODELS)}
+                                                "dry_run", "sounds", "wake_aliases", "phrase_aliases", "personality",
+                                                "gesture_size", "gesture_speed", "dance_clap")},
+                "commands": [[c, SAY[c]] for c in Trainer.ORDER + ("praise",)], "models": list(MODELS)}
 
     def clip_wav(self, i):
         a = self.clips.get(i)
