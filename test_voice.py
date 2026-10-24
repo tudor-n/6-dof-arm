@@ -86,6 +86,30 @@ def test_learned_aliases_count():
     assert kind("Mummy, come here", m=m) == "nowake"             # only what was learned
 
 
+def test_personality_reactions():
+    for text, cmd in [("Dummy, are you dumb?", "no"), ("Dummy, you stupid", "no"), ("Dummy, are you an idiot", "no"),
+                      ("Dummy, good boy!", "praise"), ("Dummy, who's a good boy", "praise"), ("Dummy, well done", "praise"),
+                      ("Dummy, are you awake?", "yes"), ("Dummy, can you hear me", "yes")]:
+        assert kind(text) == cmd, f"{text!r} -> {kind(text)}, wanted {cmd}"
+
+
+def test_a_negation_is_never_a_reaction_or_a_command():
+    for text in ("Dummy, you're not dumb", "Dummy, aren't you stupid", "Dummy, don't relax", "Dummy, never stop",
+                 "Dummy, you are not a good boy"):
+        assert kind(text) == "unknown", f"{text!r} -> {kind(text)}"
+
+
+def test_praise_in_chatter_is_not_for_the_arm():
+    assert kind("He was such a good boy at the vet today.") == "nowake"
+    assert kind("He was such a good boy at the vet today.", need_wake=False) == "unknown"
+
+
+def test_your_own_reaction_phrases_from_voice_json():
+    h = H.Hearing({"reactions": {"praise": ["attaboy"], "no": ["are you a toaster"]}}, lambda *a: None, lambda ev: None, lambda s: None)
+    assert kind("Dummy, attaboy", m=h.matcher) == "praise" and kind("Dummy, are you a toaster", m=h.matcher) == "no"
+    assert kind("Dummy, good boy", m=h.matcher) == "praise"          # the built-in ones still count
+
+
 def test_renamed_wake_word():
     m = H.Matcher("robo")
     assert kind("Robo, relax", m=m) == "relax" and kind("Dummy, relax", m=m) == "nowake"

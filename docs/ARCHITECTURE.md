@@ -17,6 +17,7 @@ Three processes' worth of responsibility, two of them in one Python process.
 │   vision (thread) ─────────► vision.py                   │
 │   follow (thread) ─────────► finger.py                   │
 │   voice (threads) ─────────► hearing.py    ◄── mic       │
+│   gestures        ─────────► gestures.py   nod/shake/dance│
 └───────────┬──────────────────────────────────────────────┘
             │ USB serial, "J a0..a5"
 ┌───────────▼──────────────────────────────────────────────┐
@@ -273,6 +274,70 @@ The Voice tab's own messages (`voice_set`, `voice_ptt`, `voice_train`, `voice_mi
 the name", "done" and "refused"; the mic ignores the audio while one plays. The last 20 utterances
 stay in memory for the tab's play buttons, and nothing is written to disk.
 
+## Personality
+
+DUMMY answers with his gripper as a head:
+
+| You say | He does |
+|---|---|
+| "Dummy" (alone) | **nods**, then listens for the command |
+| "Dummy, are you dumb?" (stupid, an idiot, broken, useless; "you're dumb") | **shakes his head**: the base swings ±10° |
+| "Dummy, good boy" (good job, well done, good robot) | a **happy dance**: base sway with the head bobbing against it, a roll wiggle, a gripper clap, a double nod |
+| "Dummy, are you awake?" (ready, listening, there, can you hear me) | **nods** |
+
+Each reaction has its own sound on the laptop, and the Voice tab's Personality page has Try buttons,
+size and speed sliders, and a switch for the clap. Extra phrases can go in `voice.json` under
+`reactions`. A not / never / n't the phrase doesn't have rules a match out, so "you're not dumb" gets
+nothing.
+
+**gestures.py is choreography only, and pure.** A gesture is keyframes of joint-degree offsets from
+the pose the arm is in when it starts. That's why it works from anywhere and ends where it began.
+`plan()` turns the offsets into servo targets with the same sign / gain convention as
+`joint_angles()`. It finds which way of the wrist tips the tool *down* from the arm's own forward
+kinematics instead of assuming a sign. Then it checks every keyframe:
+- inside the joint limits;
+- the tool tip at least 60 mm above the table (`V.table_z`);
+- never more than 40 mm below where it started.
+
+If a keyframe fails, the whole gesture shrinks in steps to 40%, and below that it's skipped with the
+reason. The configured rest pose leaves the wrist at its limit, so there's no nod there (a shake
+still fits). Near the table there's nothing at all.
+
+**server.py runs it.** `voice_gesture()` checks first:
+- Live is on;
+- no pick is running;
+- no limp arm joint. `S.limp` mirrors the firmware: it boots limp, `R` sets it, and moving a channel
+  wakes it. A nod after a relax would otherwise wag the wrist on a limp arm.
+- the arm isn't still moving. It plans from the target, so the rest of an unfinished move would
+  otherwise run at gesture speed along a path nobody checked. Taking over from another gesture is
+  the exception.
+- for a spoken reaction, no relax fold is running. Reactions never interrupt one.
+
+Then it plans, and only if the plan works does it cancel whatever is running. A reaction that has no
+room therefore leaves the current gesture to finish and come home.
+
+Roll and gripper hold nothing up, and a start pose after a relax never moves them, so a gesture wakes
+those two itself, but only the ones it moves. The gripper is braked before it's woken, so a 360°
+servo relaxed mid-drive can't wake up driving.
+
+The gesture runs as `S.voice_task`, so STOP, manual control, another spoken command, follow switching
+on, voice going off and losing the serial link all cancel it, exactly as they cancel a spoken relax.
+It also stops by itself the moment Live is off, so nothing of it is left to happen when Live comes
+back:
+- **STOP holds where the arm is.**
+- **Another gesture hands over the first one's start pose**, so both end there.
+- **Speed:** while `S.gesture` is set, the control loop steps linearly at the gesture's own speed
+  (120 °/s by default, not the speed slider, which is left alone), so keyframes land on time.
+- **Follow** keeps tracking but doesn't write during a gesture, then carries on with whatever is
+  pending.
+- **The gripper clap** is open and close pulses of the same length, and every keyframe of a gesture
+  that claps sets the gripper (back to the 90 brake unless it's clapping). `run_gesture`'s `finally`
+  brakes it however the gesture ends, the same dead-man rule as `pick_seq`. A 360° servo isn't
+  exactly symmetric, so the jaws can drift a little per dance; the clap can be switched off.
+
+A bare "Dummy" nods only when no voice task is running, so it never interrupts a relax fold or another
+gesture.
+
 ## Frames and the chain of trust
 
 Each layer is only as good as the one under it, which is why CALIBRATION.md has a strict order:
@@ -332,5 +397,14 @@ push to talk) and takes to the calibration's `learn()`. With `DUMMY_VOICE_CLIPS=
 real WAVs through the whole chain. A wrong action fails it outright, and misses may be up to 5%.
 `DUMMY_VOICE_WAV=<folder>` makes the server play WAVs instead of the mic, for testing the tab with
 no one talking.
+
+`test_gestures.py` checks `gestures.plan()` on its own: the nod dips first, keyframes stay inside the
+limits and away from the table, gestures shrink near a limit and refuse near the table, the gripper is
+braked between claps, and every gesture ends where it began. It also runs the server's gestures
+against the real control loop, sampling the tool every tick:
+- they come back to the start pose and never get near the table;
+- they're refused with Live off, a limp arm, a pick running, or personality off;
+- STOP holds, and a dance cut off mid-clap leaves the gripper braked;
+- the real `follow_tick` pauses during a gesture and carries on after.
 
 `test_markers.py` and `calibrate_camera.py` are interactive hardware tools, not tests.
