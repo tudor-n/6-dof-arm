@@ -304,6 +304,7 @@ class S:
     follow_clamped = False; follow_pitch = None; follow_last_write = 0.0; follow_pending = False
     follow_fail = None   # rounded target last proven unreachable, not retried until it moves
     follow_kind = ''   # the server's own condition inside a state: '', 'paused', 'reach', 'clamped'
+    follow_nudge = None   # (dir, deadline) while Low / High is held; the client resends every 100 ms
 
 V = None   # Vision instance (or None when the camera is off)
 FC = HT = None   # finger.FollowController / HandTracker: made on the first follow-on, kept after
@@ -456,9 +457,13 @@ async def pick_seq(x, y, closing):
 # an allowlist, because a list of the dangerous ones goes stale silently. Relax, creep, flip or
 # set-zero during follow would have the next finger move wake a limp servo under the operator's
 # hand, or solve with a mirrored joint. unlock and live are safe only when switching OFF.
-FOLLOW_SAFE = frozenset(("follow", "speed", "client", "resync", "vset", "detect", "cam_click",
+FOLLOW_SAFE = frozenset(("follow", "follow_z", "speed", "client", "resync", "vset", "detect", "cam_click",
                          "pose_lock", "grip", "roll", "jaws"))
-FOLLOW_HOVER = (60.0, 200.0)   # mm above the table: never down into the hand, never out of reach
+FOLLOW_HOVER = (50.0, 200.0)   # mm above the table: never down into the hand, never out of reach
+# The height buttons under Follow finger: a tap loads one of these, holding Low / High moves
+# the height down / up from wherever it is at FOLLOW_NUDGE_MMS.
+FOLLOW_PRESETS = {"low": 70.0, "hover": 110.0, "high": 160.0}
+FOLLOW_NUDGE_MMS = 40.0
 
 def follow_breaks(t, m):
     if t == "live": return not m.get("on")        # Live off stops it; on is a no-op
@@ -467,6 +472,24 @@ def follow_breaks(t, m):
 
 def follow_hover():
     return clamp(float(V.s.get("follow_hover", 110.0)), *FOLLOW_HOVER)
+
+def follow_preset():
+    h = follow_hover()
+    return next((k for k, v in FOLLOW_PRESETS.items() if abs(v - h) < 0.5), "")
+
+def set_follow_hover(mm, save=True):
+    """Change the hover height. While following, the held target is rewritten at the new height
+    on the next tick, so the arm rises or sinks in place even with no finger in view."""
+    mm = clamp(float(mm), *FOLLOW_HOVER)
+    if save: V.set_setting("follow_hover", mm)
+    else: V.s["follow_hover"] = mm      # held: saved once, on release
+    if S.follow: S.follow_pending = True
+
+def follow_nudge_tick(now, dt):
+    d, deadline = S.follow_nudge
+    if now > deadline:                  # the resends stopped: released, or the tablet went away
+        S.follow_nudge = None; V.save(); log(f"Follow height {follow_hover():.0f} mm", "info"); return
+    set_follow_hover(follow_hover() + d * FOLLOW_NUDGE_MMS * dt, save=False)
 
 def follow_on():
     global FC, HT
@@ -637,6 +660,7 @@ async def control_loop():
     while True:
         await asyncio.sleep(0.02)
         now = time.time(); dt = now - last; last = now
+        if S.follow_nudge and V is not None: follow_nudge_tick(now, dt)
         if S.follow:
             try: follow_tick(now)
             except Exception as e: follow_off(f"follow crashed: {type(e).__name__}: {e}")
@@ -681,7 +705,9 @@ async def control_loop():
                              "live": S.live, "speed": S.speed, "reach": S.reach, "limited": S.limited,
                              "hw": S.ser is not None, "engaged": S.engaged, "lost": S.ser is None and S.port is not None,
                              "follow": {"on": S.follow, "state": S.follow_state, "status": S.follow_status,
-                                        "target": S.follow_target, "clamped": S.follow_clamped}}))
+                                        "target": S.follow_target, "clamped": S.follow_clamped,
+                                        "hover": follow_hover() if V is not None else None,
+                                        "preset": follow_preset() if V is not None else ""}}))
         if tick % 10 == 0 and S.clients and V is not None:
             st = V.status(); st["busy"] = bool(S.pick_task and not S.pick_task.done())
             await broadcast(st)
@@ -796,10 +822,18 @@ async def handle(ws, m):
     elif t == "follow":
         if m.get("on"): follow_on()
         else: follow_off("switched off", "info")
-    elif V is None and t in ("cam_click", "goto_click", "pick_click", "pick_detected", "vset", "detect", "pose_lock",
+    elif V is None and t in ("cam_click", "goto_click", "pick_click", "pick_detected", "vset", "detect", "pose_lock", "follow_z",
                              "marker_record", "marker_apply", "marker_reset", "marker_tape",
                              "roll_zero", "roll_flip", "jaws"):
         log("Vision is not running (camera files missing, --no-camera, or OpenCV not installed).", "err")
+    elif t == "follow_z":
+        if m.get("preset") in FOLLOW_PRESETS:
+            S.follow_nudge = None; set_follow_hover(FOLLOW_PRESETS[m["preset"]])
+            log(f"Follow height: {m['preset']} ({follow_hover():.0f} mm)", "info")
+        elif int(m.get("dir", 0)):
+            S.follow_nudge = (1 if int(m["dir"]) > 0 else -1, time.time() + 0.4)
+        elif S.follow_nudge:
+            S.follow_nudge = (S.follow_nudge[0], 0.0)    # released: the next tick saves and logs it
     elif t == "cam_click":
         r = V.click_at(float(m["u"]), float(m["v"]))
         if r:

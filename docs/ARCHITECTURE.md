@@ -155,7 +155,12 @@ speed-limited interpolator does the moving.
 
 **The target height is fixed.** One camera has no depth: the fingertip pixel says which ray the
 finger is on, not how high it is. So the target Z is `table_z + follow_hover` (kept
-within 60-200 mm) and is never derived from the finger. That limitation buys a safety property for free:
+within 50-200 mm) and is never derived from the finger. You set the height yourself with the
+Low / Hover / High buttons under Follow finger: a tap loads a preset (70 / 110 / 160 mm), and
+holding Low or High moves it 40 mm/s from wherever it is. A hold is resent every 100 ms, like
+creep, and the server stops it 0.4 s after the last one, so a lost release cannot run away. A
+new height rewrites the held target, so the arm rises or sinks in place even with no finger in
+view. That limitation buys a safety property for free:
 the arm hovers *over* the work, and can never follow a finger down into the hand.
 
 **The parallax caveat.** To turn the ray into a table point, the tracker intersects it with a
@@ -164,8 +169,15 @@ A finger held higher than that lands the target farther from the camera, by abou
 `Δh × (horizontal distance to camera) / (camera height)`. With the camera 600 mm up and the hand
 400 mm from it horizontally, a finger 30 mm higher than assumed moves the target about 20 mm.
 That's fine for rough positioning. If the aim is consistently off toward or away from the
-camera, tune `follow_finger_z` rather than anything in the pose. Estimating height from the
-apparent hand size would fix it properly, and is left for later.
+camera, tune `follow_finger_z` rather than anything in the pose.
+
+Estimating the hand's height from its apparent size was tried and doesn't work with this
+camera. Fitting MediaPipe's 3D hand model to the image landmarks (solvePnP: all 21, the palm
+only, and palm plus index), and plain palm width, length or area, all gave errors of ±70 mm or
+worse with the fingertip resting on the table, against about ±10 mm needed. It is steady (2-5 mm
+jitter while still) but biased: a turned hand looks smaller, which reads as farther away, and
+the fitted hand scale varied 1.04-1.28 between calibrations. Real height following needs a
+depth camera.
 
 **Interlocks.** Follow is the arm acting on its own, so it gives way to anything you do.
 Switching it on is refused unless Live is on, the pose is healthy, no pick is running and

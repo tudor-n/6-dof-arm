@@ -219,6 +219,12 @@ Keep a hand near STOP the whole time. **Esc** works too.
    jump to where the curl moved your fingertip. The button turns amber (holding). Point again
    and it carries on.
 7. Pull your hand **out of view**. The arm should hold still.
+   - While it holds, tap **Low**, **Hover** and **High** under Follow finger. The arm should sink
+     or rise in place to 70, 110 and 160 mm, and the tapped button turns white. The status line
+     shows the height.
+   - **Hold** High: the arm keeps rising (about 4 cm a second) until you let go or it reaches
+     200 mm. Hold Low: it sinks, down to 50 mm. Letting go stops it within half a second.
+   - Height buttons do **not** switch follow off.
 8. Check that follow switches **off** (button goes back to plain) each time you:
    - press **STOP**;
    - press **Esc**;
@@ -244,7 +250,7 @@ The other settings on that page:
 
 | Setting | Default | What it does |
 |---|---|---|
-| Hover height above table | 110 mm | How high the arm hovers. Kept between 60 and 200 |
+| Hover height above table | 110 mm | How high the arm hovers. Kept between 50 and 200. The Low / Hover / High buttons change it too |
 | Aim ahead of the fingertip | 30 mm | How far in front of your fingertip it aims |
 | Deadband | 3 mm | Hand movement smaller than this is ignored. Raise it if the arm buzzes |
 | Follow tool pitch | blank | The wrist angle follow prefers. Blank = the angle it had when follow started. It tilts away from this only as far as it must to reach where you point |

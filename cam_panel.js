@@ -35,7 +35,9 @@
     '#cflag{left:28px;top:68px;height:28px;line-height:26px;padding:0 10px;border:1px solid #ffb020;border-radius:3px;color:#ffb020;font-size:12px;white-space:nowrap}',
     // follow toggle while on: green = tracking the finger, amber = arming / holding (plain .on = waiting for a pointing hand)
     '.b.on.fg{background:#30d158;border-color:#30d158;color:#000}.b.on.fa{background:#ffb020;border-color:#ffb020;color:#000}',
-    '.b.on.fg.prs,.b.on.fa.prs{background:#b8b8b8;border-color:#b8b8b8}'
+    '.b.on.fg.prs,.b.on.fa.prs{background:#b8b8b8;border-color:#b8b8b8}',
+    // follow height buttons: .on = the height is exactly that preset
+    '.b.fz{height:38px;line-height:36px}.b.jt{height:40px;line-height:38px}'
   ].join('\n');
   document.head.appendChild(css);
   function el(h) { var d = document.createElement('div'); d.innerHTML = h; return d.firstChild; }
@@ -90,11 +92,14 @@
     '    ' + B('pr', 'pickd', 264, 52, 70, 'Pick'),
     '    <div id="cdets" class="x m d" style="left:16px;top:112px;width:318px;font-size:12px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>',
     '   </div>',
-    '   <div class="x bb" style="left:0;top:289px;width:349px;height:104px">',
-    '    ' + B('', 'follow', 16, 16, 318, 'Follow finger', ' id="cfol"'),
-    '    <div id="cfols" class="x m d" style="left:16px;top:76px;width:318px;font-size:12px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>',
+    '   <div class="x bb" style="left:0;top:289px;width:349px;height:131px">',
+    '    ' + B('', 'follow', 16, 12, 318, 'Follow finger', ' id="cfol"'),
+    '    ' + B('fz', 'folz', 16, 66, 102, 'Low', ' id="cfzlow" data-p="low" data-d="-1"'),
+    '    ' + B('fz', 'folz', 124, 66, 102, 'Hover', ' id="cfzhover" data-p="hover" data-d="0"'),
+    '    ' + B('fz', 'folz', 232, 66, 102, 'High', ' id="cfzhigh" data-p="high" data-d="1"'),
+    '    <div id="cfols" class="x m d" style="left:16px;top:110px;width:318px;font-size:12px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>',
     '   </div>',
-    '   ' + B('', 'jogo', 16, 408, 318, 'Jog tip ' + A.RARR),
+    '   ' + B('jt', 'jogo', 16, 426, 318, 'Jog tip ' + A.RARR),
     '  </div>',
     '  <div id="cjog" class="x" style="left:0;top:0;width:349px;height:472px;display:none">',
     '   <div class="x lb" style="left:16px;top:14px">Jog tip · mm</div>',
@@ -116,7 +121,7 @@
     ['z_grasp_offset', 'Grasp z = table z + this', 'mm'], ['z_floor', 'Lowest allowed tip z', 'mm'],
     ['pick_pitch', 'Pick tool pitch', 'blank = keep current, ' + MINUS + '90 = straight down'], ['grip_open', 'Gripper open value', ''], ['grip_close', 'Gripper close value', ''],
     ['drop_x', 'Drop X', 'mm'], ['drop_y', 'Drop Y', 'mm'], ['drop_z', 'Drop Z', 'mm']];
-  var FOL = [['follow_hover', 'Hover height above table', 'mm, kept within 60-200'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
+  var FOL = [['follow_hover', 'Hover height above table', 'mm, kept within 50-200'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
     ['follow_lead', 'Aim ahead of the fingertip', 'mm'], ['follow_deadband', 'Deadband', 'mm, ignores hand tremor'],
     ['follow_pitch', 'Follow tool pitch', 'preferred; blank = pitch at engage, ' + MINUS + '90 = down']];
   var BLANK = { pick_pitch: 1, follow_pitch: 1 };   // settings where blank means "keep the current pitch"
@@ -262,6 +267,21 @@
   function followOn() { return !!(S && S.follow && S.follow.on); }
   function toggleFollow() { send({ type: 'follow', on: !followOn() }); }
   act('follow', { tap: toggleFollow });
+  // Follow height: a tap loads the preset; holding Low / High moves the height from where it is.
+  // The hold resends every 100 ms like creep, so a lost release only overruns by the server's 0.4 s deadline.
+  var fzHold = null, fzRep = null, fzHeld = false;
+  function fzStop() { clearTimeout(fzHold); fzHold = null; if (fzRep) { clearInterval(fzRep); fzRep = null; send({ type: 'follow_z', dir: 0 }); } }
+  act('folz', {
+    down: function (el) {
+      var d = +el.getAttribute('data-d'); fzStop(); fzHeld = false;
+      if (d) fzHold = setTimeout(function () {
+        fzHeld = true; send({ type: 'follow_z', dir: d });
+        fzRep = setInterval(function () { send({ type: 'follow_z', dir: d }); }, 100);
+      }, 350);
+    },
+    up: fzStop,
+    tap: function (el) { if (!fzHeld) send({ type: 'follow_z', preset: el.getAttribute('data-p') }); }
+  });
   // F toggles follow on a keyboard, unless something is being typed (the detect keyboard or the number pad has the keys).
   // It can switch follow OFF from any tab, but ON only from the Camera tab, where the button and status show what it is doing.
   document.addEventListener('keydown', function (e) {
@@ -405,7 +425,9 @@
     if (!sub && !jogOpen) {   // servers without follow send no S.follow: shown as off
       var fo = S.follow, on = !!(fo && fo.on), fs = on ? fo.state : '', fb = $('cfol');
       tog(fb, 'on', on); tog(fb, 'fg', fs == 'tracking'); tog(fb, 'fa', fs == 'arming' || fs == 'holding');
-      txt($('cfols'), on && fo.status ? fo.status : '');
+      var hv = fo && fo.hover != null ? 'height ' + f0(fo.hover) + ' mm' : '';
+      txt($('cfols'), on && fo.status ? fo.status + (hv ? ' · ' + hv : '') : hv);
+      each(['low', 'hover', 'high'], function (p) { tog($('cfz' + p), 'on', !!fo && fo.preset == p); });
     }
     if (sub == 'roll' && croll.drag == null) { croll.set(Math.round(t.roll)); txt($('crollv'), f0(t.roll)); }
   }

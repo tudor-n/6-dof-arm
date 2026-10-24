@@ -471,10 +471,51 @@ def test_follow_switches_off_for_anything_not_known_safe():
     for t in ("relax", "creep", "setzero", "flip", "setlim", "links", "stop", "jog", "tip", "home",
               "rest", "nudge", "raw", "marker_record", "pick_click", "some_future_message"):
         assert S.follow_breaks(t, {}), t
-    for t in ("follow", "speed", "client", "resync", "vset", "detect", "grip", "roll", "jaws"):
+    for t in ("follow", "follow_z", "speed", "client", "resync", "vset", "detect", "grip", "roll", "jaws"):
         assert not S.follow_breaks(t, {}), t
     assert S.follow_breaks("live", {"on": False}) and not S.follow_breaks("live", {"on": True})
     assert S.follow_breaks("unlock", {"on": True}) and not S.follow_breaks("unlock", {"on": False})
+
+
+class _HoverV:
+    """Just the settings part of Vision that the follow height buttons touch."""
+    def __init__(self, h): self.s = {"follow_hover": h}; self.saves = 0
+    def set_setting(self, k, v): self.s[k] = v; self.saves += 1
+    def save(self): self.saves += 1
+
+
+def _with_hover(h, fn):
+    old = S.V, S.S.follow, S.S.follow_pending, S.S.follow_nudge
+    S.V = _HoverV(h)
+    try: return fn(S.V)
+    finally: S.V, S.S.follow, S.S.follow_pending, S.S.follow_nudge = old
+
+
+def test_follow_height_preset_tap():
+    def go(v):
+        S.S.follow, S.S.follow_pending = True, False
+        S.set_follow_hover(S.FOLLOW_PRESETS["high"])
+        assert v.s["follow_hover"] == S.FOLLOW_PRESETS["high"] and v.saves == 1
+        assert S.follow_preset() == "high"
+        assert S.S.follow_pending       # the held target is rewritten at the new height
+        S.set_follow_hover(999.0); assert S.follow_hover() == S.FOLLOW_HOVER[1]
+        S.set_follow_hover(-5.0); assert S.follow_hover() == S.FOLLOW_HOVER[0]
+        assert S.follow_preset() == ""
+    _with_hover(110.0, go)
+
+
+def test_follow_height_hold_moves_from_current_and_saves_once_on_release():
+    def go(v):
+        S.S.follow = False
+        S.S.follow_nudge = (-1, 10.0)
+        for k in range(10): S.follow_nudge_tick(1.0 + k * 0.1, 0.1)    # held 1 s
+        assert abs(v.s["follow_hover"] - (130.0 - S.FOLLOW_NUDGE_MMS)) < 1e-6 and v.saves == 0
+        S.follow_nudge_tick(11.0, 0.02)                                # past the deadline: let go
+        assert S.S.follow_nudge is None and v.saves == 1
+        S.S.follow_nudge = (-1, 1e9)
+        for k in range(200): S.follow_nudge_tick(20.0, 0.1)            # held far too long
+        assert S.follow_hover() == S.FOLLOW_HOVER[0]
+    _with_hover(130.0, go)
 
 
 def test_finger_raycast_above_the_table():
