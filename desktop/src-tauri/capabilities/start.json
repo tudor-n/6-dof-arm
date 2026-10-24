@@ -1,0 +1,6 @@
+{
+  "identifier": "start",
+  "description": "The local start page only: its TRY AGAIN and OPEN WITHOUT THE ARM buttons. The arm UI (a remote URL) gets nothing.",
+  "windows": ["main"],
+  "permissions": ["allow-start"]
+}

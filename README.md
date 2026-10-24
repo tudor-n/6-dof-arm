@@ -41,6 +41,10 @@ python server.py --port COM5           # auto-detects a CP210x/CH340 port if omi
 
 Then open <http://localhost:8080>.
 
+**Or as a desktop app (Linux):** `python3 -I -S desktop/launcher.py install --seed-venv .venv --assets-from .`
+once, then start **DUMMY** from the launcher. It keeps an installed copy on master by itself
+(calibration edits survive updates); see [desktop/README.md](desktop/README.md).
+
 ```bash
 python server.py --sim                 # no arm; vision and IK still run
 python server.py --no-camera           # no camera; arm only
@@ -74,6 +78,8 @@ gripper.
 | `test_markers.py` | Pre-flight: are all four ArUco markers visible? |
 | `test_geometry.py` | Offline tests for the pose and kinematics maths |
 | `test_finger.py` | Offline tests for pointing detection and the follow state machine |
+| `desktop/` | DUMMY, the desktop app: a Tauri window around the UI, and the launcher that installs and updates it |
+| `docs/brand/` | The DUMMY logo: marks and launcher tiles (dark and light) |
 
 ## Current state
 

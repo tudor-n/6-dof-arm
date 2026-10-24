@@ -1,0 +1,21 @@
+[package]
+name = "dummy-desktop"
+version = "0.1.0"
+description = "DUMMY: the arm's desktop app (starts server.py and shows its UI in a window)"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[dependencies]
+tauri = { version = "2" }
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The version tauri 2 uses, only to name the program (the Wayland app id) before GTK starts.
+gtk = "0.18"
+
+[profile.release]
+strip = true
