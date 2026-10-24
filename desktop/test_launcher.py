@@ -229,6 +229,72 @@ def test_offline_starts_what_is_installed(w):
     assert "fetch failed" in Path(w.paths.log).read_text()
 
 
+@world_test
+def test_an_untracked_file_where_master_adds_a_folder_is_moved_aside(w):
+    w.live("calib").write_text("scratch notes")
+    (w.work / "calib").mkdir(); w.write_work("calib/x.json", {"a": 1}); w.commit("calib folder")
+    assert L.pull(w.paths, w.log) is not None
+    assert w.live_json("calib/x.json") == {"a": 1}
+    assert any(b.endswith("/calib") for b in w.backups())
+
+
+@world_test
+def test_a_staged_new_file_master_also_adds(w):
+    w.live("new.json").write_text('{"mine": 1}'); sh(w.paths.live, "add", "new.json")
+    w.write_work("new.json", {"master": 1}); w.commit("new")
+    assert L.pull(w.paths, w.log) is not None
+    assert w.live_json("new.json") == {"master": 1} and any(b.endswith("/new.json") for b in w.backups())
+
+
+@world_test
+def test_a_failed_update_puts_everything_back_and_says_so(w):
+    cfg = w.live_json("config.json"); cfg["speed"] = 2.0
+    w.live("config.json").write_text(json.dumps(cfg, indent=2))
+    w.write_work("config.json", {"links": {"l1": 100, "l2": 120}, "speed": 1.0, "x": 1}); w.commit("x")
+    real = L.Git.ok
+    L.Git.ok = lambda self, *a, **k: False if a[:1] == ("merge",) else real(self, *a, **k)
+    try:
+        assert L.pull(w.paths, w.log) is None
+    finally:
+        L.Git.ok = real
+    assert w.live_json("config.json")["speed"] == 2.0          # the local edit is back
+    assert "didn't update" in " ".join(w.called("notify-send")[-1]["argv"])
+    assert L.pull(w.paths, w.log) is not None                   # and the next start updates
+    assert w.live_json("config.json") == {"links": {"l1": 100, "l2": 120}, "speed": 2.0, "x": 1}
+
+
+@world_test
+def test_no_update_while_something_runs_in_the_installed_copy(w):
+    os.makedirs(os.path.dirname(w.paths.python)); Path(w.paths.python).write_text(""); os.chmod(w.paths.python, 0o755)
+    (w.work / "server.py").write_text("print('v2')\n"); w.commit("two")
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], cwd=w.paths.live)
+    try:
+        assert L.busy_in(w.paths.live)
+        assert L.launch(w.paths, exec_fn=lambda exe, argv: None) == 0
+        assert w.live("server.py").read_text() == "print('v1')\n"
+        assert "not updating now" in Path(w.paths.log).read_text()
+    finally:
+        sleeper.kill(); sleeper.wait()
+    assert not L.busy_in(w.paths.live)
+
+
+@world_test
+def test_a_waiting_launcher_hands_over_once_the_app_runs(w):
+    import fcntl
+    os.makedirs(w.paths.home, exist_ok=True)
+    holder = os.open(os.path.join(w.paths.home, "launcher.lock"), os.O_RDWR | os.O_CREAT)
+    fcntl.flock(holder, fcntl.LOCK_EX)  # another launcher, busy building
+    real, L.shell_running = L.shell_running, lambda *a, **k: True
+    try:
+        assert L.take_lock(w.paths, w.log) is None
+    finally:
+        L.shell_running = real
+        os.close(holder)
+    fd = L.take_lock(w.paths, w.log)
+    assert fd is not None and not os.get_inheritable(fd)
+    os.close(fd)
+
+
 # --------------------------------------------------------------------------- venv, build, launch
 
 @world_test

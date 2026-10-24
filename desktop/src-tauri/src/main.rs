@@ -170,6 +170,16 @@ fn arm_up(port: u16) -> bool {
     text.starts_with("HTTP/1.") && text.contains(" 200 ") && text.contains("\"vocab\"")
 }
 
+/// Whatever the server started in its process group, once the server itself has exited.
+fn kill_leftovers(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::killpg(pid as libc::pid_t, libc::SIGTERM);
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
 /// The server child the app started (never one it found running).
 #[derive(Default)]
 struct Server {
@@ -180,6 +190,7 @@ impl Server {
     fn stop(&mut self) {
         let Some(mut child) = self.child.take() else { return };
         if let Ok(Some(_)) = child.try_wait() {
+            kill_leftovers(child.id());
             return;
         }
         #[cfg(unix)]
@@ -266,13 +277,24 @@ fn begin(app: AppHandle, sim: bool) {
         let sg = !sim && needs_sg();
         log_line(cfg, &format!("starting {} server.py{}{} in {}", cfg.python.display(), if sim { " --sim" } else { "" },
                                if sg { " (through sg dialout)" } else { "" }, cfg.app.display()));
-        let out = OpenOptions::new().create(true).append(true).open(&cfg.log);
-        let spawned = out.and_then(|out| {
-            let err = out.try_clone()?;
-            server_command(cfg, sim, sg).stdout(out).stderr(err).spawn()
-        });
+        // Spawned and stored under one hold of the lock, and only while this start is still the
+        // current one: a newer start or the app's exit (which bumps the number first) can never
+        // leave a server behind that nothing tracks.
+        let spawned = {
+            let mut srv = state.server.lock().unwrap();
+            if state.generation.load(Ordering::SeqCst) != me {
+                return;
+            }
+            srv.stop();
+            let out = OpenOptions::new().create(true).append(true).open(&cfg.log);
+            out.and_then(|out| {
+                let err = out.try_clone()?;
+                server_command(cfg, sim, sg).stdout(out).stderr(err).spawn()
+            })
+            .map(|child| srv.child = Some(child))
+        };
         match spawned {
-            Ok(child) => state.server.lock().unwrap().child = Some(child),
+            Ok(()) => {}
             Err(e) => {
                 log_line(cfg, &format!("could not start the server: {e}"));
                 let msg = format!("Couldn't start {}: {e}", cfg.python.display());
@@ -286,7 +308,9 @@ fn begin(app: AppHandle, sim: bool) {
                 let mut srv = state.server.lock().unwrap();
                 match srv.child.as_mut().map(|c| c.try_wait()) {
                     Some(Ok(Some(status))) => {
-                        srv.child = None;
+                        if let Some(c) = srv.child.take() {
+                            kill_leftovers(c.id());
+                        }
                         Some(status.to_string())
                     }
                     Some(Ok(None)) => None,

@@ -308,38 +308,65 @@ def pull(paths, log):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = os.path.join(paths.backups, stamp)
     saved, moved, gone = {}, [], []
+
+    def move_aside(rel):
+        os.makedirs(os.path.dirname(os.path.join(backup, rel)), exist_ok=True)
+        shutil.move(os.path.join(paths.live, rel), os.path.join(backup, rel))
+        moved.append(rel)
+
     try:
         for rel in changed:
             full = os.path.join(paths.live, rel)
-            if rel in edited and not os.path.lexists(full):
+            # An untracked file where master needs a folder: move it aside, or the fast-forward can
+            # never pass. (A tracked one is git's own file-to-folder change.)
+            parts = rel.split("/")
+            for i in range(1, len(parts)):
+                parent = "/".join(parts[:i])
+                pfull = os.path.join(paths.live, parent)
+                if parent not in at_head and parent not in moved and os.path.lexists(pfull) and (
+                        os.path.islink(pfull) or not os.path.isdir(pfull)):
+                    move_aside(parent)
+                    break
+            if rel in edited and rel not in at_head:
+                # new here (staged), and master adds it too: unstage it and move it aside
+                git("rm", "--cached", "--quiet", "--", rel)
+                if os.path.lexists(full):
+                    move_aside(rel)
+            elif rel in edited and not os.path.lexists(full):
                 gone.append(rel)  # deleted here, changed on master: master's comes back
+            elif rel in edited and os.path.isdir(full) and not os.path.islink(full):
+                move_aside(rel)   # a folder where a tracked file was
+                gone.append(rel)
             elif rel in edited:
                 os.makedirs(os.path.dirname(os.path.join(backup, rel)), exist_ok=True)
                 shutil.copy2(full, os.path.join(backup, rel), follow_symlinks=False)
                 with open(full, "rb") as f:
                     saved[rel] = f.read()
             elif rel not in at_head and os.path.lexists(full):  # untracked or ignored: master adds it
-                os.makedirs(os.path.dirname(os.path.join(backup, rel)), exist_ok=True)
-                shutil.move(full, os.path.join(backup, rel))
-                moved.append(rel)
-        if saved or gone:
-            git("checkout", head, "--", *saved, *gone)
+                move_aside(rel)
+        if (saved or gone) and not git.ok("checkout", head, "--", *saved, *gone):
+            raise OSError("resetting the edited files failed")
         if not git.ok("merge", "--ff-only", "--quiet", remote, what="fast-forward"):
             raise OSError("the fast-forward failed")
     except OSError as e:
         log(f"pull: {e}; putting everything back")
-        for rel, data in saved.items():
-            with open(os.path.join(paths.live, rel), "wb") as f:
-                f.write(data)
-        for rel in moved:
-            shutil.move(os.path.join(backup, rel), os.path.join(paths.live, rel))
         for rel in gone:
             try:
                 os.unlink(os.path.join(paths.live, rel))
             except OSError:
                 pass
+        for rel, data in saved.items():
+            with open(os.path.join(paths.live, rel), "wb") as f:
+                f.write(data)
+        for rel in reversed(moved):
+            try:
+                shutil.move(os.path.join(backup, rel), os.path.join(paths.live, rel))
+            except OSError as e2:
+                log(f"pull: couldn't put {rel} back ({e2}); it is in {backup}")
+        notify("DUMMY didn't update", f"Updating to master failed, so it opens the version you had. Details: {paths.log}",
+               log, urgent=True)
         return None
-    merged_keys, replaced = [], []
+    merged_keys, replaced, kept = [], [], []
     for rel, ours in saved.items():
         full = os.path.join(paths.live, rel)
         try:
@@ -358,14 +385,16 @@ def pull(paths, log):
         if merged != theirs:
             with open(full, "wb") as f:
                 f.write(dump_like(merged, theirs_bytes))
+        kept.append(rel)
         merged_keys += [f"{rel}: {c}" for c in conflicts]
+    back = [g for g in gone if os.path.lexists(os.path.join(paths.live, g))]
     log(f"pull: {head[:8]} -> {remote[:8]} ({len(changed)} files)")
-    for rel in saved:
-        log(f"pull: kept your edits to {rel} (backup in {backup})")
-    if merged_keys or replaced or moved or gone:
+    for rel in kept:
+        log(f"pull: merged your edits to {rel} with master's (backup in {backup})")
+    if merged_keys or replaced or moved or back:
         lines = [f"master's value won for {k}" for k in merged_keys] + \
                 [f"master's {r} replaced yours" for r in replaced] + [f"moved aside: {m}" for m in moved] + \
-                [f"{g} was deleted here; master's version is back" for g in gone]
+                [f"{g} was deleted here; master's version is back" for g in back]
         for line in lines:
             log(f"pull: {line}")
         notify("DUMMY updated", f"Some local changes were replaced by master's (copies in {backup}). "
@@ -427,18 +456,45 @@ def build(paths, log):
 
 
 def take_lock(paths, log):
+    """The launcher lock, or None when a shell started while we waited (then just hand over). The
+    fd is close-on-exec and is never closed by hand: the exec that starts the shell releases it, so
+    a second launcher can't slip in between the release and the shell showing up."""
     os.makedirs(paths.home, exist_ok=True)
-    fd = os.open(os.path.join(paths.home, "launcher.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(os.path.join(paths.home, "launcher.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
     deadline = time.monotonic() + BUILD_LIMIT_S + SYNC_LIMIT_S
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return fd
         except OSError:
+            if shell_running():
+                os.close(fd)
+                return None
             if time.monotonic() > deadline:
                 log("lock: another launcher kept it too long; going on")
                 return fd
             time.sleep(0.5)
+
+
+def busy_in(folder, proc="/proc", uid=None):
+    """A process of this user whose working folder is inside `folder` (a server.py left running
+    from the installed copy writes its calibration there: never update under it)."""
+    uid = os.getuid() if uid is None else uid
+    root = os.path.realpath(folder)
+    try:
+        pids = [p for p in os.listdir(proc) if p.isdigit() and int(p) != os.getpid()]
+    except OSError:
+        return False
+    for pid in pids:
+        try:
+            if os.stat(os.path.join(proc, pid)).st_uid != uid:
+                continue
+            cwd = os.readlink(os.path.join(proc, pid, "cwd"))
+        except OSError:
+            continue
+        if cwd == root or cwd.startswith(root + os.sep):
+            return True
+    return False
 
 
 def shell_args(paths):
@@ -450,14 +506,13 @@ def launch(paths, exec_fn=os.execv):
     try:
         if not shell_running() and os.path.isdir(os.path.join(paths.live, ".git")):
             log.trim()
-            fd = take_lock(paths, log)
-            try:
-                if not shell_running():
+            if take_lock(paths, log) is not None and not shell_running():
+                if busy_in(paths.live):
+                    log("pull: a program runs in the installed copy (a server.py?); not updating now")
+                else:
                     pull(paths, log)
-                    sync_venv(paths, log)
-                    build(paths, log)
-            finally:
-                os.close(fd)
+                sync_venv(paths, log)
+                build(paths, log)
     except Exception as e:  # never stop the app from opening
         log(f"launcher: {type(e).__name__}: {e}")
     if not os.access(paths.exe, os.X_OK):
