@@ -19,7 +19,7 @@ The same camera can steer the arm by hand. With **Follow finger** on, point at t
 the tool hovers over the spot your index finger points at, following it as far as the arm can
 reach. Curl the finger and it stays put. It's for quick positioning, not precision. The
 **Low / Hover / High** buttons under it pick the hover height: tap for a preset, hold Low or
-High to go lower or higher from where it is.
+High to go as low or as high as the arm reaches.
 
 ## Documentation
 

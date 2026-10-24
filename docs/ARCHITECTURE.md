@@ -155,9 +155,13 @@ speed-limited interpolator does the moving.
 
 **The target height is fixed.** One camera has no depth: the fingertip pixel says which ray the
 finger is on, not how high it is. So the target Z is `table_z + follow_hover` (kept
-within 50-200 mm) and is never derived from the finger. You set the height yourself with the
+within 20-400 mm) and is never derived from the finger. You set the height yourself with the
 Low / Hover / High buttons under Follow finger: a tap loads a preset (70 / 110 / 160 mm), and
-holding Low or High moves it 40 mm/s from wherever it is. A hold is resent every 100 ms, like
+holding Low or High moves it 40 mm/s from wherever it is, as far as the arm reaches. Each step
+of a hold checks that the arm can still hit the held spot exactly at the new height (any pitch
+in the window, `reachable_target(..., exact_only=True)`, a few ms), and stops at the last height
+that works instead of letting the arm be pulled sideways; the status line then says "highest
+here" or "lowest here". Far out the top comes well under 400 (about 235 mm at 380 mm out). A hold is resent every 100 ms, like
 creep, and the server stops it 0.4 s after the last one, so a lost release cannot run away. A
 new height rewrites the held target, so the arm rises or sinks in place even with no finger in
 view. That limitation buys a safety property for free:

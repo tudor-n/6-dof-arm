@@ -121,7 +121,7 @@
     ['z_grasp_offset', 'Grasp z = table z + this', 'mm'], ['z_floor', 'Lowest allowed tip z', 'mm'],
     ['pick_pitch', 'Pick tool pitch', 'blank = keep current, ' + MINUS + '90 = straight down'], ['grip_open', 'Gripper open value', ''], ['grip_close', 'Gripper close value', ''],
     ['drop_x', 'Drop X', 'mm'], ['drop_y', 'Drop Y', 'mm'], ['drop_z', 'Drop Z', 'mm']];
-  var FOL = [['follow_hover', 'Hover height above table', 'mm, kept within 50-200'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
+  var FOL = [['follow_hover', 'Hover height above table', 'mm, 20-400 (the arm may reach less)'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
     ['follow_lead', 'Aim ahead of the fingertip', 'mm'], ['follow_deadband', 'Deadband', 'mm, ignores hand tremor'],
     ['follow_pitch', 'Follow tool pitch', 'preferred; blank = pitch at engage, ' + MINUS + '90 = down']];
   var BLANK = { pick_pitch: 1, follow_pitch: 1 };   // settings where blank means "keep the current pitch"
@@ -425,7 +425,7 @@
     if (!sub && !jogOpen) {   // servers without follow send no S.follow: shown as off
       var fo = S.follow, on = !!(fo && fo.on), fs = on ? fo.state : '', fb = $('cfol');
       tog(fb, 'on', on); tog(fb, 'fg', fs == 'tracking'); tog(fb, 'fa', fs == 'arming' || fs == 'holding');
-      var hv = fo && fo.hover != null ? 'height ' + f0(fo.hover) + ' mm' : '';
+      var hv = fo && fo.hover != null ? 'height ' + f0(fo.hover) + ' mm' + (fo.hlimit ? ' (' + fo.hlimit + ' here)' : '') : '';
       txt($('cfols'), on && fo.status ? fo.status + (hv ? ' · ' + hv : '') : hv);
       each(['low', 'hover', 'high'], function (p) { tog($('cfz' + p), 'on', !!fo && fo.preset == p); });
     }

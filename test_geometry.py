@@ -478,17 +478,18 @@ def test_follow_switches_off_for_anything_not_known_safe():
 
 
 class _HoverV:
-    """Just the settings part of Vision that the follow height buttons touch."""
+    """Just the parts of Vision that the follow height buttons touch."""
     def __init__(self, h): self.s = {"follow_hover": h}; self.saves = 0
+    def table_z(self, x, y): return 5.0
     def set_setting(self, k, v): self.s[k] = v; self.saves += 1
     def save(self): self.saves += 1
 
 
 def _with_hover(h, fn):
-    old = S.V, S.S.follow, S.S.follow_pending, S.S.follow_nudge
+    old = S.V, S.S.follow, S.S.follow_pending, S.S.follow_nudge, S.S.follow_target, S.S.follow_pitch, S.S.follow_hlimit
     S.V = _HoverV(h)
     try: return fn(S.V)
-    finally: S.V, S.S.follow, S.S.follow_pending, S.S.follow_nudge = old
+    finally: S.V, S.S.follow, S.S.follow_pending, S.S.follow_nudge, S.S.follow_target, S.S.follow_pitch, S.S.follow_hlimit = old
 
 
 def test_follow_height_preset_tap():
@@ -506,16 +507,29 @@ def test_follow_height_preset_tap():
 
 def test_follow_height_hold_moves_from_current_and_saves_once_on_release():
     def go(v):
-        S.S.follow = False
+        S.S.follow, S.S.follow_target, S.S.follow_pitch = True, (230.0, 50.0, 135.0), -32.0
         S.S.follow_nudge = (-1, 10.0)
         for k in range(10): S.follow_nudge_tick(1.0 + k * 0.1, 0.1)    # held 1 s
         assert abs(v.s["follow_hover"] - (130.0 - S.FOLLOW_NUDGE_MMS)) < 1e-6 and v.saves == 0
         S.follow_nudge_tick(11.0, 0.02)                                # past the deadline: let go
         assert S.S.follow_nudge is None and v.saves == 1
-        S.S.follow_nudge = (-1, 1e9)
-        for k in range(200): S.follow_nudge_tick(20.0, 0.1)            # held far too long
-        assert S.follow_hover() == S.FOLLOW_HOVER[0]
     _with_hover(130.0, go)
+
+
+def test_follow_height_hold_goes_as_far_as_the_arm_reaches():
+    """Held Low / High is not limited to the presets: it stops at the last height the arm can
+    still hit exactly over the held spot (or at FOLLOW_HOVER), and says which end it is at."""
+    def go(v):
+        S.S.follow, S.S.follow_target, S.S.follow_pitch = True, (230.0, 50.0, 115.0), -32.0
+        for d, end, name in ((1, 1, "highest"), (-1, 0, "lowest")):
+            S.S.follow_nudge = (d, 1e9)
+            for k in range(600): S.follow_nudge_tick(20.0, 0.05)       # held 30 s
+            h = S.follow_hover()
+            assert S.S.follow_hlimit == name, (d, h, S.S.follow_hlimit)
+            assert S.hover_reaches(h), h
+            assert h == S.FOLLOW_HOVER[end] or not S.hover_reaches(h + d * 1.0), h
+            assert h > S.FOLLOW_PRESETS["high"] if d > 0 else h < S.FOLLOW_PRESETS["low"], h
+    _with_hover(110.0, go)
 
 
 def test_finger_raycast_above_the_table():

@@ -19,7 +19,7 @@ DEFAULT_SETTINGS = {
     "grip_open": 130.0, "grip_close": 50.0,
     "drop_x": 100.0, "drop_y": 200.0, "drop_z": 180.0,
     "show_grid": True, "show_tip": True, "show_markers": True,
-    # finger follow (server.py): the arm hovers follow_hover above the table (never under 50 mm,
+    # finger follow (server.py): the arm hovers follow_hover above the table (never under 20 mm,
     # never lower because of the finger), over the spot follow_lead mm ahead of the fingertip.
     # follow_finger_z is the height the fingertip is assumed to be at for the raycast: one camera
     # has no depth, so a finger held higher than this aims further from the camera.

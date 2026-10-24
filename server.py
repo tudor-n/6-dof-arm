@@ -228,9 +228,10 @@ def ik_auto(x, y, z, p0, cfg, roll_servo=None):
 
 FOLLOW_PITCHES = (-120.0, 30.0)   # tool pitch window reachable_target may use: down to tilted-up, never flipped
 
-def reachable_target(x, y, z, pitch, cfg, roll_servo=None):
+def reachable_target(x, y, z, pitch, cfg, roll_servo=None, exact_only=False):
     """The point nearest (x, y, z) that the tool can hit EXACTLY, and the pitch to hit it at.
-    Returns (x, y, z, pitch, clamped) or None.
+    Returns (x, y, z, pitch, clamped) or None. exact_only skips the search for a nearer point
+    and returns None instead, a few ms rather than tens.
 
     Built for finger follow. Hitting the point matters more than holding the wrist angle: on
     this arm the wrist's travel is narrow enough that one fixed pitch reaches only a band of
@@ -271,6 +272,7 @@ def reachable_target(x, y, z, pitch, cfg, roll_servo=None):
     moved = behind or abs(azc - az) > 1e-9
     p = best_pitch(r0)
     if p is not None: return (r0 * c, r0 * s, z, p, True) if moved else (x, y, z, p, False)
+    if exact_only: return None
     L = cfg["links"]; T = cfg.get("tool") or DEFAULT_TOOL
     rmax = L["L1"] + L["L2"] + L["L3"] + abs(T.get("along", 0.0)) + abs(T.get("perp", 0.0)) + 5.0
     coarse = pitches(3.0)                    # a coarse ring scan; the winner is refined below
@@ -305,6 +307,7 @@ class S:
     follow_fail = None   # rounded target last proven unreachable, not retried until it moves
     follow_kind = ''   # the server's own condition inside a state: '', 'paused', 'reach', 'clamped'
     follow_nudge = None   # (dir, deadline) while Low / High is held; the client resends every 100 ms
+    follow_hlimit = ''    # 'highest' / 'lowest' while a held Low / High has hit the end of the reach
 
 V = None   # Vision instance (or None when the camera is off)
 FC = HT = None   # finger.FollowController / HandTracker: made on the first follow-on, kept after
@@ -459,9 +462,9 @@ async def pick_seq(x, y, closing):
 # hand, or solve with a mirrored joint. unlock and live are safe only when switching OFF.
 FOLLOW_SAFE = frozenset(("follow", "follow_z", "speed", "client", "resync", "vset", "detect", "cam_click",
                          "pose_lock", "grip", "roll", "jaws"))
-FOLLOW_HOVER = (50.0, 200.0)   # mm above the table: never down into the hand, never out of reach
+FOLLOW_HOVER = (20.0, 400.0)   # mm above the table; a held Low / High also stops where the arm can't reach
 # The height buttons under Follow finger: a tap loads one of these, holding Low / High moves
-# the height down / up from wherever it is at FOLLOW_NUDGE_MMS.
+# the height down / up from wherever it is at FOLLOW_NUDGE_MMS, as far as the arm reaches.
 FOLLOW_PRESETS = {"low": 70.0, "hover": 110.0, "high": 160.0}
 FOLLOW_NUDGE_MMS = 40.0
 
@@ -485,11 +488,30 @@ def set_follow_hover(mm, save=True):
     else: V.s["follow_hover"] = mm      # held: saved once, on release
     if S.follow: S.follow_pending = True
 
+def follow_spot():
+    """Where a height change is checked: the spot follow is holding, else under the tool now."""
+    if S.follow and S.follow_target: return S.follow_target[0], S.follow_target[1]
+    x, y, _ = fk(S.tgt, S.cfg)[0][-1]
+    return x, y
+
+def hover_reaches(h):
+    x, y = follow_spot()
+    p = S.follow_pitch if S.follow_pitch is not None else fk(S.tgt, S.cfg)[1]
+    r = reachable_target(x, y, V.table_z(x, y) + h, p, S.cfg, S.tgt[4], exact_only=True)
+    return r is not None and not r[4]
+
 def follow_nudge_tick(now, dt):
     d, deadline = S.follow_nudge
     if now > deadline:                  # the resends stopped: released, or the tablet went away
-        S.follow_nudge = None; V.save(); log(f"Follow height {follow_hover():.0f} mm", "info"); return
-    set_follow_hover(follow_hover() + d * FOLLOW_NUDGE_MMS * dt, save=False)
+        S.follow_nudge = None; S.follow_hlimit = ''; V.save()
+        log(f"Follow height {follow_hover():.0f} mm", "info"); return
+    h0 = follow_hover(); h = clamp(h0 + d * FOLLOW_NUDGE_MMS * dt, *FOLLOW_HOVER)
+    # Stop at the last height the arm still hits exactly over this spot, rather than letting
+    # reachable_target pull it sideways. A height already out of reach may still move, to get back in.
+    if h != h0 and not hover_reaches(h) and hover_reaches(h0):
+        S.follow_hlimit = "highest" if d > 0 else "lowest"; return
+    S.follow_hlimit = "highest" if h >= FOLLOW_HOVER[1] else "lowest" if h <= FOLLOW_HOVER[0] else ""
+    set_follow_hover(h, save=False)
 
 def follow_on():
     global FC, HT
@@ -570,7 +592,7 @@ def follow_tick(now):
             key = (round(x), round(y), round(z), round(S.tgt[4]))
             # Proving nothing reaches a point scans every pitch at every radius (~35 ms on the
             # event loop), so a point already proven unreachable is not tried again until it
-            # moves. FOLLOW_HOVER keeps the height reachable, so this is a backstop.
+            # moves. A held Low / High stops at a reachable height, so this is a backstop.
             r = None if key == S.follow_fail else reachable_target(x, y, z, S.follow_pitch, S.cfg, S.tgt[4])
             S.follow_last_write = now
             if r is None: kind, S.follow_fail = "reach", key
@@ -707,7 +729,8 @@ async def control_loop():
                              "follow": {"on": S.follow, "state": S.follow_state, "status": S.follow_status,
                                         "target": S.follow_target, "clamped": S.follow_clamped,
                                         "hover": follow_hover() if V is not None else None,
-                                        "preset": follow_preset() if V is not None else ""}}))
+                                        "preset": follow_preset() if V is not None else "",
+                                        "hlimit": S.follow_hlimit}}))
         if tick % 10 == 0 and S.clients and V is not None:
             st = V.status(); st["busy"] = bool(S.pick_task and not S.pick_task.done())
             await broadcast(st)
