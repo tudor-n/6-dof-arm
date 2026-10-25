@@ -13,11 +13,11 @@ Three processes' worth of responsibility, two of them in one Python process.
 │ server.py                                                │
 │   kinematics      fk / fk_planar / ik / ik_auto          │
 │   control_loop    50 Hz interpolate -> serial            │
-│   pick_seq        hover, descend, close, lift, drop      │
+│   pick_seq        hover, descend, close, lift, hold      │
 │   vision (thread) ─────────► vision.py                   │
 │   follow (thread) ─────────► finger.py                   │
 │   voice (threads) ─────────► hearing.py    ◄── mic       │
-│   gestures        ─────────► gestures.py   nod/shake/dance│
+│   gestures        ─────────► gestures.py   nod/wave/...  │
 └───────────┬──────────────────────────────────────────────┘
             │ USB serial, "J a0..a5"
 ┌───────────▼──────────────────────────────────────────────┐
@@ -56,9 +56,47 @@ before using it. `joint_angles()` returns only the four arm joints; wrist roll i
 separately by `roll_angle()` because it affects the tool offset but not the link chain.
 
 **Picking.** `start_pick` → `pick_seq`: open the gripper, set wrist roll from the object's
-jaw-closing angle, hover, descend strictly, close, lift, move to the drop pose, open. It
-runs as a cancellable asyncio task; STOP cancels it and brakes the gripper. `start_pick`
-refuses outright when the camera pose is unhealthy.
+jaw-closing angle, hover, descend strictly, close, lift back to hover, and **stay there
+holding it**, the gripper braked. `S.held` records what it holds and where it came from;
+the state broadcast carries it. It runs as a cancellable asyncio task (`S.pick_task`); STOP
+cancels it and brakes the gripper. `start_pick` refuses outright when the camera pose is
+unhealthy, and while something is already held. From the hold:
+
+| Action | Does |
+|---|---|
+| hand-over (`handover`; the Camera tab's Bring here; "bring it to me") | carries it to `handover_x/y/z/pitch` in `vision.json` (310, 30, 240, −15: toward the operator, up, a little to their right) and waits; the Open button or "let go" releases it |
+| put down (`put_down`; Put down; "put it down") | lowers it straight down to the pick's own grasp height (`max(z_floor, table + z_grasp_offset)`), opens for 1 s, brakes, rises to hover |
+| put back (`put_down` + `back`; "put it back") | the same, carried first to above the spot it was picked from |
+| carry (the Camera tab's Hover while holding) | to above the tapped spot |
+
+**The carry rule.** A move made while holding drives the gripper closed on the way, as the
+lift always did, and brakes on arrival (`carry()`); between moves the gear train holds the
+jaws. The 360° servo therefore never drives for longer than one move, which a hold that
+can last minutes needs. Every target is checked first: `aim()` finds the pitch nearest the
+preferred one that puts the tool exactly on the point (`reachable_target(exact_only=True)`),
+and a point no pitch reaches is refused without moving. One gripping sequence runs at a time
+(`start_seq`). Opening the gripper (a grip value above 95), a put-down, Relax grip or Relax
+all clears `S.held`.
+
+**Rest pose.** Limp, the arm falls wherever gravity takes it, so the rest pose
+(`config.json` `rest`, joint angles) parks the tool on the desk: 240 mm out, tool pitched
+−80°, upper arm leaning forward. It was found from the calibrated kinematics: the elbow and
+the heavy wrist end as low as the joint limits allow, every joint at least 6° from its
+limit, nothing but the tool near the desk. (The old values, written for the default
+calibration, clamped to a pose with the tool ~290 mm up, and the old handler also ignored
+the servo gain, which `rest_servos()` now includes.) Getting there is the delicate part,
+since a joint-space move to a pose on the desk could sweep the tool across it. `park()`:
+1. rises straight up first if the tool is lower than the spot above the rest pose;
+2. goes to 60 mm above the rest spot;
+3. comes straight down through an exact IK waypoint every 10 mm (`rest_approach()`), at a
+   fixed 20 °/s whatever the speed slider says (`S.slow`).
+
+It runs as `S.voice_task`, so STOP, manual control or another command ends it where it is,
+and `settle()` stops it the moment Live goes off. The Rest pose button and the spoken rest
+pose, relax and good night all use it. **Relax all stays immediate** and goes limp
+wherever the arm is; Rest pose then Relax all is the gentle way. Calibrate → Advanced →
+**Set rest here** saves wherever the arm was jogged to as the new rest pose (`setrest`, a
+calibration message), because a limp arm's settling can only really be judged on the bench.
 
 ## vision.py
 
@@ -203,8 +241,9 @@ reflects `state.follow`, so two tablets can't disagree about whether follow is o
 ## Voice
 
 The Voice tab lets you say **"Dummy, come here"** (finger follow on), **"Dummy, start pose"**,
-**"Dummy, relax"** (fold to the rest pose, then go limp) and **"Dummy, stop"**. It listens in one
-of two modes, chosen on the tab: **wake word**, where only speech that starts with "Dummy" counts,
+**"Dummy, relax"** (park on the desk, then go limp), **"Dummy, stop"** and about fifty more: small
+moves, the gripper, picking, the camera, questions and emotes (the catalogue is below, and on the
+tab's Commands page). It listens in one of two modes, chosen on the tab: **wake word**, where only speech that starts with "Dummy" counts,
 or **push to talk**, where holding the button (or V on a keyboard) is the only way in and the name
 is optional. Push to talk also works in wake-word mode, as a bypass for testing.
 
@@ -227,10 +266,25 @@ id; the server decides what that means.
   hotword otherwise invites a hallucinated "Dummy".
 - `Matcher`, pure, turns the text into a command. The wake word must be one of the first three
   words, spelled exactly (or as a learned alias), and **never** fuzzy-matched: a fuzzy match would
-  make "Mummy, come here" or "my tummy" a trigger for everyone. What follows it is fuzzy-matched
-  (character similarity at least 0.8, and 0.1 clear of the runner-up command) after filler words
-  are dropped, so "Hey Dummy, please come here" works and "Dummy, can you start the pose estimation
-  again?" doesn't.
+  make "Mummy, come here" or "my tummy" a trigger for everyone. What follows it is tried in order
+  (`Matcher.parse`):
+  1. **an exact phrase**, as said or with the filler words dropped, wins outright;
+  2. **an object slot**: "pick up / grab / fetch / get the X", "bring me / give me / hand me the X",
+     "find / look for / where is / do you see the X", with up to three words of object. "It",
+     "that" and "this" mean whatever Detect sees now;
+  3. **a command with an amount** (`parse_amount`): a number as digits or words, an optional mm / cm /
+     degrees, or "a bit" / "a lot", accepted only for the step commands;
+  4. **the fuzzy match**: character similarity at least 0.8 and 0.1 clear of the runner-up command,
+     after filler words are dropped. "Hey Dummy, please come here" works; "Dummy, can you start the
+     pose estimation again?" doesn't.
+
+  A not / never / n't rules every path out. Two phrases read too much like another command to ever
+  act: "slower" (like "lower") and "closer" (like "close"). They come back as unknown with a hint
+  saying what to say instead. A phrase whose filler-free form would read like another command
+  counts only as said in full: "let go" opens the gripper, but its filler-free "let" is too close to
+  "left" to match on its own. `test_voice.py` checks that every phrase maps to its own command and
+  that no two commands' phrases come within the threshold, apart from a short list of pairs that
+  sound different and are fine said as they are.
 
 **The wake word isn't a separate model.** Every utterance the VAD finds is transcribed, and it counts
 only if it starts with the name and the rest is a command. A dedicated spotter (openWakeWord,
@@ -266,7 +320,48 @@ check, pick refusal and follow's allowlist apply to it exactly as to a button. O
 - **Nothing acts late.** Every utterance carries the `Hearing.gen` it started in. STOP, a mode change
   and a calibration starting or ending bump it, so speech still being transcribed when you press
   STOP is dropped, and so is a command that reaches the server after it.
-- **Dry run** hears and shows everything and acts on nothing except "stop".
+- **Dry run** hears and shows everything and acts on nothing except "stop". The questions (where
+  are you, is the pose OK, what do you see) and the voice settings still answer.
+
+**The commands** (`hearing.COMMANDS`, `server.VOICE_DO`). The operator stands in front of the arm,
+facing it, so their left is the robot's right (−Y) and "toward me" is +X.
+
+| Group | Say | Does |
+|---|---|---|
+| Moves (need Live; refused while an arm joint is limp) | up, down, left, right, toward me, away | the tool 20 mm that way (a bit 10, a lot 50, a number capped at 50). It lands on that point exactly, at the pitch nearest the current one, or doesn't move and shakes its head. While following, up and down change the hover height and follow stays on |
+| | turn left / right | the base 15° (at most 45) |
+| | tilt up / down, point down | the tool pitch ±15° about the same tip point, or straight down |
+| | roll left / right, straighten | the wrist 30° (at most 90), top of the tool to your left / right; or back to roll zero |
+| | open, close (let go, release, drop it; grip, squeeze) | a timed pulse, 1.0 s / 1.5 s (a bit 0.4, a lot 2.5), then the brake. A voice task, so STOP brakes it too; it doesn't end follow |
+| | rest pose, wake up | `park()`; Wake all then Start pose |
+| | undo, again | back to before the last spoken step (the last 10 are kept); the last step once more |
+| Pick | pick up the pen, bring me the pen, pick it up | finds it (sets the detect prompt, waits up to 8 s for 3 frames of it), then picks it, and with bring hands it over |
+| | bring it to me, put it down, put it back | hand-over, put down, put back (see Picking) |
+| Speed, follow, camera | slow down, faster, full speed, normal speed | the speed buttons, one step or straight to 180 / 60 |
+| | hover low / high, normal height | the Follow height presets |
+| | find the pen, stop looking | Detect on with that prompt, then a nod (and where) or a shake; Detect off |
+| | is the pose OK?, what do you see?, where are you? | answers in the Heard list, with a nod or a shake for the yes / no ones |
+| Voice | yes, no; what can I say; stop listening; be quiet, sounds on | answer a pick waiting for yes; open the Commands page; voice off; sounds off / on |
+
+**A spoken pick asks first.** With `pick_confirm` on (the default; Voice → Settings → Confirm picks),
+the pick hovers over what it found so you can see its choice, plays a rising chime, and the chip
+reads SAY YES with a countdown. "Yes" within 8 s runs `start_pick` there. "No", silence, STOP or any
+other command cancels it (`voice_ask()`, a future the yes or no resolves). With it off, it picks at
+once, like the Pick button. Either way every refusal of `start_pick` still applies. A command that
+finishes later, like find or a pick, sends its Heard entry again with the outcome.
+
+**The no-name window.** A bare "Dummy" opens 5 s in which the command needs no name, as before.
+After a successful step the server opens the same window with `Hearing.keep_awake()`, but it then
+takes only steps, again, undo, the speed words and stop. So "Dummy, up … up … left … again" needs
+the name once, while "relax" said in passing still needs it. While a pick waits, only yes, no and
+stop are taken without the name.
+
+**Not by voice, on purpose**: Live (on or off), calibration and setup (set zero, flip, limits,
+links, Set rest here, markers, roll zero / flip, unlock, raw servos, camera settings, pose lock),
+go-to-click and pick-click (the tap on the video is right there), dictated coordinates, continuous
+motion ("keep going": a voice STOP lands 0.3–1 s late), and "pick that" while pointing (it would
+descend where the hand is). No spoken replies either: like the film's Dummy, he answers with beeps
+and gestures.
 
 The Voice tab's own messages (`voice_set`, `voice_ptt`, `voice_train`, `voice_mics`) are in
 `FOLLOW_SAFE`: changing a voice setting doesn't end follow. A push-to-talk hold is resent every
@@ -282,11 +377,19 @@ DUMMY answers with his gripper as a head:
 |---|---|
 | "Dummy" (alone) | **nods**, then listens for the command |
 | "Dummy, are you dumb?" (stupid, an idiot, broken, useless; "you're dumb") | **shakes his head**: the base swings ±10° |
-| "Dummy, good boy" (good job, well done, good robot) | a **happy dance**: base sway with the head bobbing against it, a roll wiggle, a gripper clap, a double nod |
-| "Dummy, are you awake?" (ready, listening, there, can you hear me) | **nods** |
+| "Dummy, good boy" (good job, well done, good robot), or "dance" | a **happy dance**: base sway with the head bobbing against it, a roll wiggle, a gripper clap, a double nod |
+| "Dummy, are you awake?" (ready, listening, there, can you hear me, are you happy, how are you) | **nods** |
+| "Dummy, hello" (hi, bye, good morning, see you) | a **wave**: head up, the wrist rolls side to side |
+| "Dummy, thank you" (thanks, take a bow) | a **bow**: one deep, slow nod that holds |
+| "Dummy, bad boy" (bad robot, naughty, shame on you) | a **sad droop**: sinks slowly, looks away, comes back |
+| "Dummy, …" and a short phrase that isn't a command | a **puzzled head tilt**, with a rising "hm?" instead of the "no" beep |
+| "Dummy, do a trick" (show off, surprise me) | one of nod, shake, wave, bow, dance |
 
-Each reaction has its own sound on the laptop, and the Voice tab's Personality page has Try buttons,
-size and speed sliders, and a switch for the clap. Extra phrases can go in `voice.json` under
+Each reaction has its own sound on the laptop, and the Voice tab's Personality page has Try buttons
+for all seven gestures, size and speed sliders, and a switch for the clap. The bow and the droop move
+at half and a third of the gesture speed (`gestures.TEMPO`), so they look solemn. The head tilt never
+comes for a long sentence (more than four words after the name: that's talk, not a command), nor in
+the no-name window. Extra phrases can go in `voice.json` under
 `reactions`. A not / never / n't the phrase doesn't have rules a match out, so "you're not dumb" gets
 nothing.
 
@@ -300,8 +403,8 @@ kinematics instead of assuming a sign. Then it checks every keyframe:
 - never more than 40 mm below where it started.
 
 If a keyframe fails, the whole gesture shrinks in steps to 40%, and below that it's skipped with the
-reason. The configured rest pose leaves the wrist at its limit, so there's no nod there (a shake
-still fits). Near the table there's nothing at all.
+reason. Near the table there's nothing at all, so at the rest pose (parked on the desk) no gesture
+fits: a start pose or a wake up gets him up first.
 
 **server.py runs it.** `voice_gesture()` checks first:
 - Live is on;
@@ -335,8 +438,9 @@ back:
   brakes it however the gesture ends, the same dead-man rule as `pick_seq`. A 360° servo isn't
   exactly symmetric, so the jaws can drift a little per dance; the clap can be switched off.
 
-A bare "Dummy" nods only when no voice task is running, so it never interrupts a relax fold or another
-gesture.
+A bare "Dummy" nods, and a short miss tilts his head, only when no voice task is running, so neither
+interrupts a relax fold or another gesture. A step refused at the reach limit, a find that saw
+nothing and a "no" answer shake his head through the same path, and only when a gesture can run.
 
 ## Frames and the chain of trust
 
@@ -395,6 +499,14 @@ that the raised-plane raycast recovers a known point above the table.
 talk, learned aliases), made-up speech probabilities to the segmenter (pre-roll, blips, hysteresis,
 push to talk) and takes to the calibration's `learn()`. With `DUMMY_VOICE_CLIPS=<folder>` it also runs
 real WAVs through the whole chain. A wrong action fails it outright, and misses may be up to 5%.
+It also guards the whole catalogue (every phrase maps to its own command, no two commands read
+alike), the amounts and object slots, and runs the spoken commands against the real control loop:
+steps that move exactly that far in the operator's frame or are refused without moving, the
+gripper pulse that always ends braked, a pick that never descends without a yes, and the no-name
+window that takes only steps. `test_geometry.py` runs the pick, hand-over and put-down sequences
+against a fake `move_tip` (the gripper squeezes while carrying, brakes whenever it stops, never
+opens over a spot it can't reach), and checks the rest pose (on the desk, clear of the limits) and
+`park()`'s straight-down approach.
 `DUMMY_VOICE_WAV=<folder>` makes the server play WAVs instead of the mic, for testing the tab with
 no one talking.
 

@@ -1357,47 +1357,183 @@ def test_roll_overlay_matches_the_command():
 
 # ------------------------------------------------------------------------- pick gripper
 
-def run_pick(reachable=True, crash_at=None):
-    """Run pick_seq with no arm, camera or waiting. Returns (gripper target after, gripper history)."""
+def run_seq(make, refuse=(), crash_at=None, held=None, tgt=None):
+    """Run a gripping sequence (pick, hand-over, put down) with no arm, camera or waiting.
+    make() builds the coroutine. move_tip is faked: it refuses the moves named in `refuse` and
+    records (who, z, gripper target); each wait records the gripper target the arm waited with.
+    Returns (gripper target after, history, S.held after)."""
     import asyncio, copy, types
     seen = []
     def move_tip(x, y, z, pitch=None, who="tip", strict=False, **kw):
-        seen.append((who, S.S.tgt[5]))
+        seen.append((who, round(z, 1), S.S.tgt[5]))
         if who == crash_at: raise RuntimeError("boom")
-        return reachable or who != "descend"
-    async def arrived(*a, **kw): return True
-    async def nap(t): seen.append(("sleep", S.S.tgt[5]))
-    s = copy.deepcopy(V.DEFAULT_SETTINGS); s.update(grip_open=130.0, grip_close=50.0)
-    saved = (S.V, S.move_tip, S.wait_arrived, S.asyncio.sleep, S.S.live, list(S.S.tgt), list(S.S.cur))
+        return who not in refuse
+    async def arrived(*a, **kw): seen.append(("wait", None, S.S.tgt[5])); return True
+    async def nap(t): seen.append(("sleep", None, S.S.tgt[5]))
+    s = copy.deepcopy(V.DEFAULT_SETTINGS); s.update(grip_open=130.0, grip_close=50.0, z_floor=0.0, z_grasp_offset=-34.0, hover=130.0)
+    saved = (S.V, S.move_tip, S.wait_arrived, S.asyncio.sleep, S.S.live, list(S.S.tgt), list(S.S.cur), S.S.held)
     S.V = types.SimpleNamespace(s=s, table_z=lambda x, y: 5.0, roll={"zero": 90.0, "sign": 1})
     S.move_tip, S.wait_arrived, S.asyncio.sleep = move_tip, arrived, nap
-    S.S.live = True; S.S.tgt[5] = S.S.cur[5] = 90.0
+    S.S.live = True; S.S.tgt[5] = S.S.cur[5] = 90.0; S.S.held = held
+    if tgt: S.S.tgt[:4] = list(tgt)
     try:
-        asyncio.run(S.pick_seq(200.0, 0.0, None))
-        return S.S.tgt[5], seen
+        asyncio.run(make())
+        return S.S.tgt[5], seen, S.S.held
     finally:
-        S.V, S.move_tip, S.wait_arrived, S.asyncio.sleep, S.S.live, S.S.tgt, S.S.cur = saved
+        S.V, S.move_tip, S.wait_arrived, S.asyncio.sleep, S.S.live, S.S.tgt, S.S.cur, S.S.held = saved
 
 
-def test_pick_brakes_the_gripper_after_the_release():
-    grip, seen = run_pick()
-    assert seen[-1] == ("sleep", 130.0), f"the release should open for a while first: {seen}"
+def run_pick(reachable=True, crash_at=None, bring=False):
+    return run_seq(lambda: S.pick_seq(200.0, 0.0, None, "pen", bring), refuse=() if reachable else ("descend",), crash_at=crash_at)
+
+
+def moves(seen): return [w for w, _, _ in seen if w not in ("wait", "sleep")]
+
+
+def hover_over(x, y):
+    """Servo values hovering 130 mm over (x, y) at a pitch the arm reaches there: where a pick leaves it."""
+    p = S.reachable_target(x, y, 135.0, -60.0, S.S.cfg, 90.0, exact_only=True)[3]
+    return S.ik(x, y, 135.0, p, S.S.cfg, 90.0)[0]
+
+
+def test_a_pick_ends_holding_it_over_where_it_was():
+    grip, seen, held = run_pick()
+    assert moves(seen) == ["hover", "descend", "lift"], f"no drop leg any more: {moves(seen)}"
     assert grip == 90.0, f"gripper left driving at {grip} after the pick finished"
+    assert held == {"x": 200.0, "y": 0.0, "name": "pen"}, held
 
 
-def test_pick_still_holds_closed_while_carrying():
-    _, seen = run_pick()
-    assert dict(seen)["drop"] == 50.0, f"the object must stay gripped on the way to the drop: {seen}"
+def test_pick_still_squeezes_while_lifting():
+    _, seen, _ = run_pick()
+    lift = [g for w, _, g in seen if w == "lift"]
+    assert lift == [50.0], f"the object must stay gripped on the way up: {seen}"
+
+
+def test_bring_me_hands_it_over_squeezing_on_the_way():
+    grip, seen, held = run_pick(bring=True)
+    assert moves(seen)[-1] == "hand-over", moves(seen)
+    i = [k for k, e in enumerate(seen) if e[0] == "hand-over"][0]
+    assert seen[i][1] == S.HANDOVER[2] and seen[i + 1] == ("wait", None, 50.0), seen[i:]
+    assert grip == 90.0 and held, (grip, held)
 
 
 def test_aborted_pick_brakes_the_gripper():
-    grip, _ = run_pick(reachable=False)
+    grip, _, held = run_pick(reachable=False)
     assert grip == 90.0, f"gripper left driving at {grip} after an aborted pick"
+    assert held is None, "an aborted pick holds nothing"
 
 
 def test_crashed_pick_brakes_the_gripper():
-    grip, _ = run_pick(crash_at="lift")
+    grip, _, _ = run_pick(crash_at="lift")
     assert grip == 90.0, f"gripper left driving at {grip} after a crashed pick"
+
+
+def test_put_down_lowers_to_the_grasp_height_opens_and_brakes():
+    grip, seen, held = run_seq(lambda: S.place_seq(), held={"x": 200.0, "y": 0.0, "name": "pen"}, tgt=hover_over(200.0, 0.0))
+    assert moves(seen) == ["put down", "up"], moves(seen)
+    assert seen[0][1] == 0.0, f"down to max(z_floor, table + z_grasp_offset) = 0, got {seen[0][1]}"
+    assert ("wait", None, 50.0) in seen and ("sleep", None, 130.0) in seen, f"held on the way down, then opened: {seen}"
+    assert grip == 90.0 and held is None, (grip, held)
+
+
+def test_put_back_carries_it_to_where_it_was_picked_first():
+    grip, seen, held = run_seq(lambda: S.place_seq(back=True), held={"x": 150.0, "y": 60.0, "name": "pen"}, tgt=hover_over(220.0, -40.0))
+    assert moves(seen) == ["put back", "put back", "up"], moves(seen)
+    assert seen[0][1] == 135.0 and seen[1] == ("wait", None, 50.0), f"carried over at hover, squeezing: {seen[:2]}"
+    assert grip == 90.0 and held is None, (grip, held)
+
+
+def test_put_down_where_the_table_cant_be_reached_never_opens():
+    grip, seen, held = run_seq(lambda: S.place_seq(), refuse=("put down",), held={"x": 200.0, "y": 0.0, "name": "pen"},
+                               tgt=hover_over(200.0, 0.0))
+    assert all(g != 130.0 for _, _, g in seen), f"it opened over a spot it could not reach: {seen}"
+    assert grip == 90.0 and held, (grip, held)
+
+
+def test_the_hand_over_point_is_reachable_exactly():
+    assert tuple(V.DEFAULT_SETTINGS[k] for k in ("handover_x", "handover_y", "handover_z", "handover_pitch")) == S.HANDOVER
+    x, y, z, p = S.HANDOVER
+    servo, reach, lim = S.ik(x, y, z, p, S.S.cfg, 90.0)
+    assert not reach and not lim, (reach, lim)
+    assert math.dist(S.fk(list(servo) + [90.0, 90.0], S.S.cfg)[0][-1], (x, y, z)) < 1.0
+    J = S.S.cfg["joints"]
+    m = min(min(abs(servo[i] - J[i]["min"]), abs(servo[i] - J[i]["max"])) for i in range(4))
+    assert m >= 15.0, f"only {m:.1f} deg from a joint limit at the hand-over point"
+    assert x > 250 and z > 150 and 0 < y < 60, "toward the operator, up, and a little to their right"
+
+
+# ------------------------------------------------------------------------- rest pose
+
+def test_the_rest_pose_parks_the_tool_on_the_desk():
+    rest, clipped = S.rest_servos()
+    assert not clipped, "a joint limit clips the rest pose"
+    s = rest + [90.0, 90.0]
+    pl = S.fk_planar(s, S.S.cfg); tz = 5.0
+    assert 2.0 <= pl[-1][1] - tz <= 6.0, f"tool point {pl[-1][1] - tz:.1f} mm above the desk"
+    assert min(p[1] for p in pl[2:-1]) >= tz + 15.0, f"another part of the arm is on the desk: {pl}"
+    J = S.S.cfg["joints"]
+    m = min(min(abs(s[i] - J[i]["min"]), abs(s[i] - J[i]["max"])) for i in range(4))
+    assert m >= 6.0, f"the rest pose is only {m:.1f} deg from a joint limit"
+
+
+def test_rest_servos_include_the_gain():
+    # joint_angles() multiplies by the gain, so going back divides by it (the old rest handler didn't)
+    rest, _ = S.rest_servos()
+    ang = S.joint_angles(rest + [90.0, 90.0], S.S.cfg)
+    R = S.S.cfg["rest"]
+    assert all(abs(a - b) < 0.1 for a, b in zip(ang, (R["base"], R["shoulder"], R["elbow"], R["wrist"]))), (ang, R)
+
+
+def test_park_comes_straight_down_onto_the_rest_pose():
+    rest, _ = S.rest_servos()
+    path = S.rest_approach(rest)
+    assert len(path) == int(S.REST_ABOVE_MM / S.REST_STEP_MM), f"a waypoint is missing: {len(path)}"
+    end = S.fk(rest + [90.0, 90.0], S.S.cfg)[0][-1]
+    zs = []
+    for wp in path:
+        p = S.fk(list(wp) + [90.0, 90.0], S.S.cfg)[0][-1]
+        assert math.hypot(p[0] - end[0], p[1] - end[1]) < 1.0, f"not straight above the rest spot: {p} vs {end}"
+        zs.append(p[2])
+    assert abs(zs[0] - end[2] - S.REST_ABOVE_MM) < 1.0 and zs == sorted(zs, reverse=True), zs
+    for a, b in zip(path + [rest], path[1:] + [rest]):
+        assert max(abs(u - v) for u, v in zip(a, b)) < 15.0, f"a jump between waypoints: {a} -> {b}"
+
+
+def test_park_goes_up_and_over_before_the_slow_descent():
+    """park() against a fake settle that lands every target at once: the order of what it asks for."""
+    import asyncio
+    seen = []
+    async def settle(timeout=15.0):
+        S.S.cur = list(S.S.tgt); seen.append((S.fk(S.S.tgt, S.S.cfg)[0][-1][2], S.S.slow)); return True
+    async def quiet(m): pass
+    saved = (S.settle, S.broadcast, list(S.S.tgt), list(S.S.cur), S.S.live)
+    S.settle, S.broadcast = settle, quiet
+    S.S.live = True
+    S.S.tgt[:4] = S.ik(200.0, 120.0, 30.0, -70.0, S.S.cfg, 90.0)[0]   # low, off to the side
+    S.S.cur = list(S.S.tgt)
+    try:
+        assert asyncio.run(S.park())
+        rest, _ = S.rest_servos()
+        top = S.fk(S.rest_approach(rest)[0] + [90.0, 90.0], S.S.cfg)[0][-1][2]
+        assert abs(seen[0][0] - top) < 1.0 and seen[0][1] == 0.0, f"rises straight up first, at normal speed: {seen[:2]}"
+        assert abs(seen[1][0] - top) < 1.0, f"then over the rest spot at that height: {seen[:2]}"
+        assert all(sl == S.REST_DESCENT_DPS for _, sl in seen[2:]), f"the descent is slow all the way: {seen}"
+        assert [round(v, 1) for v in S.S.tgt[:4]] == rest and S.S.slow == 0.0, (S.S.tgt, S.S.slow)
+    finally:
+        S.settle, S.broadcast, S.S.tgt, S.S.cur, S.S.live = saved
+
+
+def test_park_stops_when_live_goes_off():
+    import asyncio
+    calls = []
+    async def settle(timeout=15.0): calls.append(1); return False      # what settle() says once Live is off
+    async def quiet(m): pass
+    saved = (S.settle, S.broadcast, list(S.S.tgt), S.S.live)
+    S.settle, S.broadcast = settle, quiet; S.S.live = True
+    try:
+        assert asyncio.run(S.park()) is False and len(calls) == 1 and S.S.slow == 0.0
+    finally:
+        S.settle, S.broadcast, S.S.tgt, S.S.live = saved
 
 
 # ------------------------------------------------------------------------- camera choice

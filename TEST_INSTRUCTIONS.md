@@ -133,7 +133,8 @@ and brakes the gripper - know where it is before you turn Live on.
    distance is your off-axis offset, and it is the number step 4 needs.
 3. Click a point, **Go to hover**. The arm should arrive above where you clicked. Height is
    the weakest axis, since every calibration touch was taken on the table.
-4. Then try a pick, starting near the centre of the workspace.
+4. Then try a pick, starting near the centre of the workspace. It ends **holding the object at
+   hover over the same spot**; Put down and Bring here take it from there (§8c).
 
 ---
 
@@ -321,7 +322,7 @@ Keep a hand near STOP the whole time. Start the server with the arm and camera a
 3. Say **"Dummy, come here"**: follow switches on (Camera tab, the Follow finger button). Point,
    and the arm follows as in section 5. Then say **"Dummy, stop"**: follow switches off and the arm
    holds.
-4. Say **"Dummy, relax"**. The arm **folds to the rest pose first, then goes limp**. The first time,
+4. Say **"Dummy, relax"**. The arm **parks on the desk first (§8b), then goes limp**. The first time,
    keep a hand under the arm anyway.
    - Say it again, and while it's folding press **STOP** (or drag a handle). It should stop folding
      and stay **engaged**, and the log says `relax cancelled`.
@@ -367,8 +368,8 @@ DUMMY nods when he hears just "Dummy", shakes his head (the base swings) at "are
 dances at "good boy". Offline first:
 
 ```
-.venv/bin/python test_gestures.py      # 29/29
-.venv/bin/python test_voice.py         # 40/40
+.venv/bin/python test_gestures.py      # 32/32 (with feat/voice-commands)
+.venv/bin/python test_voice.py         # 62/62 (with feat/voice-commands)
 ```
 
 ### 7a. With the Try buttons first
@@ -384,8 +385,8 @@ lively anyway). Press **Start pose**.
    - If the jaws drift more than you like over a few dances, switch **Gripper clap** off.
 4. Press **Dance** again and hit **STOP** halfway. It freezes where it is, the gripper stops, and
    it doesn't carry on.
-5. **Rest pose**, then **Nod**: refused (`no room to nod here (the wrist pitch limit)`), because
-   the wrist is at its limit there. **Shake** still works.
+5. **Rest pose**, then **Nod**: refused (`no room to nod here (the table)`), because the rest pose
+   parks the tool on the desk. Nothing fits there; **Start pose** gets him up again.
 6. **Relax all**, then **Nod**: refused (`the arm is relaxed`). **Start pose** brings it back.
 
 ### 7b. By voice
@@ -400,6 +401,95 @@ Wake word on, as in §6.
 6. Turn **Follow finger** on, point, and say **"Dummy, good boy"**. It dances, comes back over your
    finger and keeps following.
 7. **Dry run** on: the Heard list says `dry run, not acted on` (or `would nod`) and nothing moves.
+
+---
+
+## 8. Holding, hand-over, rest, and every command by voice (branch `feat/voice-commands`)
+
+Three changes: a pick now **holds the object at hover** instead of dropping it somewhere, with a
+hand-over and a put-down to finish; the **rest pose parks the tool on the desk**, so relaxing there
+drops nothing; and about **fifty voice commands** plus four emotes.
+
+### 8a. Offline (no hardware)
+
+```
+.venv/bin/python test_geometry.py      # 117/117
+.venv/bin/python test_gestures.py      # 32/32
+.venv/bin/python test_voice.py         # 62/62
+.venv/bin/python test_finger.py        # 41/41
+```
+
+### 8b. The rest pose, on the bench
+
+The old rest pose had the tool ~290 mm above the desk on this arm, so a relax there dropped the
+gripper. The new one has the tool point ~3 mm above the desk, 240 mm out, pitched steeply down. The
+real jaws probably sit a little higher than that (the pick's grasp offset says the model runs low),
+so expect a gap of a centimetre or so. Keep a hand near STOP, speed **60**.
+
+1. Live on, **Start pose**, then **Rest pose**. The arm rises if it was low, goes over a spot 240 mm
+   out, and comes **straight down slowly** (20 °/s whatever the speed slider says) until the
+   gripper is just above the desk. The log says `Rest pose: parked on the desk`.
+   - Press **Rest pose** again from somewhere low and to the side: it must go **up first**, never
+     sweep across the desk.
+   - Press **STOP** during the descent: it stops where it is.
+2. **Measure the gap** between the jaws and the desk. Then press **Relax all** with a hand ready,
+   and watch what moves: how far the gripper drops, and whether the elbow sags or the tool slides.
+3. If anything moves more than a centimetre or two: Live on, **Start pose**, then jog the arm (Move
+   tab) to the pose it settled in, with the gripper resting on the desk. Then press Calibrate →
+   Advanced → **Set rest here**, and repeat 1–2. The log line has the new joint angles.
+4. **"Dummy, relax"** parks the same way, and only then goes limp. **Relax all** stays immediate
+   anywhere else: Rest pose first is the gentle way.
+
+### 8c. Pick, hold, hand-over, put down
+
+1. Detect a pen and press **Pick** (Camera tab). It picks it up, lifts to hover over the same spot
+   and **stays there**. The Target box now shows **Put down** and **Bring here**, and the line under
+   it says `Holding pen`. Watch the gripper: braked, the object not slipping. If it slips, note it
+   (the gear train is what holds it between moves).
+2. **Bring here**: it carries the pen toward you, up, and a little to your right (Camera → Setup →
+   Pick settings → Hand-over X/Y/Z/pitch), squeezing on the way, and stops. Hold the gripper's
+   **Open** button to take it. If the spot is awkward, change the hand-over fields.
+3. Pick again, tap another spot on the video, press **Hover**: it carries the pen there. **Put down**
+   lowers it to the table, opens, and rises to hover.
+4. While holding, press **Pick**: refused (`already holding pen`).
+
+### 8d. Voice commands
+
+Wake word on, Live on, Start pose. The Voice tab's **Commands** page lists everything; say
+**"Dummy, what can I say?"** to open it.
+
+1. **Steps**: "Dummy, up", "Dummy, left", "Dummy, toward me", "Dummy, away". Each moves 20 mm.
+   **Check the directions from where you stand**: left must go to *your* left. After one, say
+   "up", "again" or "undo" **without the name** within 5 s: it takes them. "Relax" said in that
+   window without the name is ignored.
+2. "Dummy, up a bit" (10 mm), "Dummy, left 3 cm", "Dummy, down a lot" (50 mm). Near the top of the
+   reach, "Dummy, up a lot" is refused with a head shake and doesn't move.
+3. "Dummy, turn left": the base turns to **your** left. "Dummy, roll left": the top of the gripper
+   tips to **your** left. "Dummy, straighten" brings the wrist back. If either goes the wrong way,
+   it's a one-line sign flip in `server.py` (`v_turn` / `v_roll`); tell me.
+4. "Dummy, tilt down a bit": the tool tips down, the tip stays put. At the start pose "tilt up" is
+   refused (the shoulder is at its limit there).
+5. "Dummy, close", then "Dummy, open": a timed pulse each, then braked. Say "Dummy, close" and press
+   STOP halfway: it brakes at once.
+6. "Dummy, faster" / "slow down" / "full speed" / "normal speed": the speed buttons follow.
+7. "Dummy, pick up the pen". It finds it, **hovers over it**, chimes, and the chip says
+   **SAY YES**. Say **"yes"** (no name needed): it picks. Try again and say "no", or say nothing for
+   8 s: it stays over the pen and never descends. Then switch Voice → Settings → **Confirm picks**
+   off: "Dummy, pick up the pen" picks at once.
+8. "Dummy, bring it to me", "Dummy, put it back", "Dummy, bring me the pen".
+9. "Dummy, find the cup": a nod and where, or a shake. "Dummy, is the pose OK?", "Dummy, what do
+   you see?", "Dummy, where are you?": answers in Heard.
+10. "Dummy, slower" and "Dummy, closer" do nothing and say what to say instead ("slow down",
+    "toward me"). "Dummy, let go" opens the gripper.
+11. "Dummy, be quiet" stops the beeps; "Dummy, sounds on" brings them back. "Dummy, stop listening"
+    turns voice off.
+
+### 8e. The new emotes
+
+Voice → Personality → **Try**: Wave, Bow, Huh?, Sad. Each starts and ends where the arm was. By
+voice: "Dummy, hello" (a wave), "Dummy, thank you" (a slow bow), "Dummy, bad boy" (a slow droop that
+looks away), "Dummy, do a trick", and "Dummy, banana" (a short phrase that isn't a command): a
+puzzled head tilt and a rising "hm?".
 
 ---
 
