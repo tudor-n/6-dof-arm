@@ -105,6 +105,11 @@ wherever the arm is; Rest pose then Relax all is the gentle way. Calibrate → A
 **Set rest here** saves wherever the arm was jogged to as the new rest pose (`setrest`, a
 calibration message), because a limp arm's settling can only really be judged on the bench.
 
+**Wake all** (`relax` with mask 0) engages every servo where it was last told to be, then sends the
+arm to the start pose under the speed limit, gripper braked. Engaging in place matters after a
+relax at the rest pose: that is where the arm really is, so nothing jumps, and from there the
+start pose lifts the tool straight off the desk before it swings back.
+
 ## vision.py
 
 A `Vision` class imported by `server.py`, running two daemon threads. It was once a

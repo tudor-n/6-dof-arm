@@ -439,6 +439,9 @@ so expect a gap of a centimetre or so. Keep a hand near STOP, speed **60**.
    Advanced → **Set rest here**, and repeat 1–2. The log line has the new joint angles.
 4. **"Dummy, relax"** parks the same way, and only then goes limp. **Relax all** stays immediate
    anywhere else: Rest pose first is the gentle way.
+5. Relaxed at the rest pose, press **Wake all**. The servos engage where the arm is (no jump), then
+   it lifts off the desk and travels to the **start pose** at the speed slider's pace, gripper
+   still.
 
 ### 8c. Pick, hold, hand-over, put down
 

@@ -1023,6 +1023,11 @@ async def handle(ws, m):
         if S.ser:
             try: S.ser.write(f"R {S.limp}\n".encode()); S.engaged = True
             except Exception as e: print("serial error:", e)
+        if not S.limp:
+            # Wake all: every servo engages where it was last told to be (where a parked arm really is,
+            # so nothing jumps), then the arm travels to the start pose under the speed limit, gripper braked
+            S.tgt = list(START_POSE); S.tgt[5] = S.cur[5] = 90.0
+            S.tool = tool_from_tgt(); await broadcast(S.tool)
     elif t == "live":
         S.live = bool(m["on"])
         log("Live " + ("ON" if S.live else "OFF"), "ok" if S.live else "warn")
