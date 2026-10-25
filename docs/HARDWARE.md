@@ -148,6 +148,11 @@ in software: `do_stop()` in `server.py` sets both the current and target gripper
 both route here. Treat this as a real safety feature, not a nicety - a stalled MG996R gets
 hot enough to damage itself and anything it is gripping.
 
+The start pose has the same trap. `START_POSE` matches the firmware's power-on values, and its
+gripper value is 100, which for this servo means "open slowly", not a position. Taken as a target
+it drove the jaws into their stop and stalled there until STOP. So the Start pose button (and
+"Dummy, start pose") and turning Live on both put the gripper on the 90 brake instead.
+
 ## Tool centre point
 
 The point the gripper actually grasps with is **not** the end of link 3, and it is **not**

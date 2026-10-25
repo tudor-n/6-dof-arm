@@ -479,6 +479,24 @@ def test_spoken_stop_works_with_no_page_and_in_dry_run():
     _server(go)
 
 
+def test_start_pose_and_live_on_leave_the_gripper_braked():
+    # START_POSE's gripper value (100) is the firmware's power-on number; on the 360 gripper it means
+    # "open slowly", so taken as a target it drives the jaws into their stop and stalls there
+    async def go(sv, ser, page):
+        S = sv.S
+        S.tgt[5] = S.cur[5] = 50.0                                    # closing on something
+        await sv.handle(page, {"type": "home"})
+        assert S.tgt[:5] == sv.START_POSE[:5] and S.tgt[5] == S.cur[5] == 90.0, S.tgt
+        assert (await sv.voice_act("home", "start pose"))[1] and S.tgt[5] == 90.0
+        S.live = False; S.tgt[5] = S.cur[5] = 100.0                   # what the firmware boots with, read back by GET
+        await sv.handle(page, {"type": "live", "on": True})
+        assert S.tgt[5] == S.cur[5] == 90.0, S.tgt
+        await asyncio.sleep(0.1)
+        js = [w for w, _ in ser.sent if w.startswith("J ")]
+        assert js and float(js[-1].split()[-1]) == 90.0, js[-1:]
+    _server(go)
+
+
 def test_a_command_overtaken_by_stop_is_dropped():
     async def go(sv, ser, page):
         ev = {"kind": "command", "cmd": "home", "say": "start pose", "gen": sv.HEAR.gen}

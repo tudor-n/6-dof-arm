@@ -18,6 +18,8 @@ except ImportError:
 HERE = Path(__file__).parent
 CFG_PATH = HERE / "config.json"
 START_POSE = [90.0, 16.0, 10.0, 72.0, 90.0, 100.0]  # must match firmware power-on pose
+# ...but its gripper value is no pose: on the 360 gripper 100 means "open slowly", which drives the jaws
+# into their stop and stalls there. The start pose and Live on put the gripper on its 90 brake instead.
 DEFAULT_CFG = {
     # millimetres - MEASURE THESE (or edit in the Calibrate tab)
     "links": {"L0": 80.0,    # table -> shoulder axis height
@@ -1017,13 +1019,16 @@ async def handle(ws, m):
     elif t == "live":
         S.live = bool(m["on"])
         log("Live " + ("ON" if S.live else "OFF"), "ok" if S.live else "warn")
-        if S.live: S.limp = 0           # R 0 below (with no arm there is nothing limp to model)
+        if S.live:
+            S.limp = 0                  # R 0 below (with no arm there is nothing limp to model)
+            S.tgt[5] = S.cur[5] = 90.0  # the firmware boots with the gripper at 100 (see START_POSE): engage it braked
         if S.live and S.ser:
             try: S.ser.write(b"R 0\n"); S.engaged = True; push_limits()
             except Exception as e: print("serial error:", e)
     elif t == "speed": S.speed = clamp(float(m["dps"]), 5, 180)
     elif t == "home":
-        S.tgt = list(START_POSE); S.tool = tool_from_tgt(); await broadcast(S.tool)
+        S.tgt = list(START_POSE); S.tgt[5] = S.cur[5] = 90.0     # the joints' start pose, gripper braked
+        S.tool = tool_from_tgt(); await broadcast(S.tool)
     elif t in ("setzero", "flip", "setlim", "links", "setrest"):
         if t == "setzero":
             i = int(m["joint"]); S.cfg["joints"][i]["zero"] = round(S.tgt[i], 1)

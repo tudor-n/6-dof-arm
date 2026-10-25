@@ -361,7 +361,7 @@
     if (k == 'sp') { if (KB.cur && KB.cur.charAt(KB.cur.length - 1) != ' ') KB.cur += ' '; }
     else if (k == 'nx') kbCommit();
     else if (k == 'clr') { KB.tokens = []; KB.cur = ''; }
-    else if (k == 'g') { KB.cur = el.getAttribute('data-w'); kbCommit(); }
+    else if (k == 'sug') { KB.cur = el.getAttribute('data-w'); kbCommit(); }   // a suggestion chip (never a letter: 'g' was both)
     else if (k.charAt(0) == 'x' && k.length > 1) KB.tokens.splice(+k.slice(1), 1);
     else KB.cur += k;
     KB.dirty = true; kbRender();
@@ -396,7 +396,7 @@
       out.push(w);
     }
     var sk = out.join('|');
-    if (sk !== sgKey) { sgKey = sk; var s = ''; each(out, function (w) { s += '<span class="sg" data-a="kk" data-k="g" data-w="' + esc(w) + '">' + esc(w) + '</span>'; }); $('kbsg').innerHTML = s; }
+    if (sk !== sgKey) { sgKey = sk; var s = ''; each(out, function (w) { s += '<span class="sg" data-a="kk" data-k="sug" data-w="' + esc(w) + '">' + esc(w) + '</span>'; }); $('kbsg').innerHTML = s; }
     // keep the caret in view once the chips overflow the header (rough width estimate avoids a layout read per key)
     if (ck.length * 9 + KB.tokens.length * 60 + KB.cur.length * 11 > 760) $('kbt').scrollLeft = 99999; else if ($('kbt').scrollLeft) $('kbt').scrollLeft = 0;
   }
