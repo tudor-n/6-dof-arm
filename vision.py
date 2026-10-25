@@ -17,7 +17,8 @@ DEFAULT_SETTINGS = {
     "z_floor": 0.0,                        # the arm will not command a tip lower than this
     "pick_pitch": None,                    # None = keep current tool pitch (as before); -90 = straight down
     "grip_open": 130.0, "grip_close": 50.0,
-    "drop_x": 100.0, "drop_y": 200.0, "drop_z": 180.0,
+    # where "bring it to me" holds what was picked: toward the operator, up, a little to their right
+    "handover_x": 310.0, "handover_y": 30.0, "handover_z": 240.0, "handover_pitch": -15.0,
     "show_grid": True, "show_tip": True, "show_markers": True,
     # finger follow (server.py): the arm hovers follow_hover above the table (never under 20 mm,
     # never lower because of the finger), over the spot follow_lead mm ahead of the fingertip.

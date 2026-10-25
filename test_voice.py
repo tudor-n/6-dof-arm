@@ -298,9 +298,7 @@ def _server(scenario):
     finally: S.ser, S.live, S.speed, S.clients, S.follow, S.cur, S.tgt, sv.HEAR = saved
 
 
-def _rest_servos(sv):
-    R, J = sv.S.cfg["rest"], sv.S.cfg["joints"]
-    return [round(sv.clamp(J[i]["zero"] + J[i]["sign"] * a, J[i]["min"], J[i]["max"]), 1) for i, a in enumerate([R["base"], R["shoulder"], R["elbow"], R["wrist"]])]
+def _rest_servos(sv): return sv.rest_servos()[0]
 
 
 async def _finish(sv):

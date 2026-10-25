@@ -198,6 +198,9 @@ body{position:fixed;left:0;top:0;right:0;bottom:0;color:#fff;font:400 15px/1.4 R
   <div id="rawrows"></div>
   <div class="x lb" style="left:28px;top:416px">Link lengths · mm</div>
   <div id="advLinks" class="x" style="left:28px;top:434px;width:708px;height:48px"></div>
+  <div class="x lb" style="left:28px;top:506px">Rest pose</div>
+  <div id="restt" class="x m d" style="left:136px;top:494px;width:400px;font-size:12px;line-height:16px;white-space:pre-line"></div>
+  <div class="x b h44" data-a="setrest" style="right:28px;top:490px;width:160px;padding:0">Set rest here</div>
  </div>
 </div>
 
@@ -747,10 +750,13 @@ function buildCal(){
 act('rawz',{tap:function(el){send({type:'setzero',joint:+el.getAttribute('data-i')});}});
 act('rawf',{tap:function(el){send({type:'flip',joint:+el.getAttribute('data-i')});}});
 act('rawl',{tap:function(el){send({type:'setlim',joint:+el.getAttribute('data-i'),which:el.getAttribute('data-w')});}});
+act('setrest',{tap:function(){send({type:'setrest'});}});
 function jinfo(J,i){return (i<4?'zero '+J.zero+' · sign '+(J.sign>0?'+':MINUS)+' · ':'')+J.min+'–'+J.max;}
 function updateCalText(){
  cfg.joints.forEach(function(j,i){txt($('ct'+i),(i<4?'z '+j.zero+' '+(j.sign>0?'+':MINUS)+' · ':'')+j.min+'–'+j.max);});
  each(LK,function(k){fieldShow('lk'+k,cfg.links[k]);fieldShow('lka'+k,cfg.links[k]);});
+ var R=cfg.rest;if(R)txt($('restt'),'base '+R.base+'° · shoulder '+R.shoulder+'° · elbow '+R.elbow+'° · wrist '+R.wrist+'°\n'+
+  'Jog the arm to where it should park, gripper resting on the desk, then set it here.');
  wzInfo();
 }
 function updateCal(){

@@ -21,10 +21,7 @@ J = CFG["joints"]
 def tip_z(s): return sv.fk(list(s[:5]) + [90.0], CFG)[0][-1][2]
 
 
-def rest_pose():
-    R = CFG["rest"]
-    return [round(sv.clamp(J[i]["zero"] + J[i]["sign"] * a, J[i]["min"], J[i]["max"]), 1)
-            for i, a in enumerate([R["base"], R["shoulder"], R["elbow"], R["wrist"]])] + [90.0, 90.0]
+def rest_pose(): return sv.rest_servos()[0] + [90.0, 90.0]
 
 
 START = list(sv.START_POSE)
@@ -114,12 +111,11 @@ def test_refuses_near_the_table():
         assert steps is None and why == "the table", (name, why)
 
 
-def test_the_rest_pose_has_no_room_to_nod():
-    # config.json's rest pose is clipped by the joint limits: the wrist ends at its limit, so a nod
-    # can't dip, while a shake (base only) still fits
-    steps, _, why = plan("nod", rest_pose())
-    assert steps is None and "wrist" in why, why
-    assert plan("shake", rest_pose())[0] is not None
+def test_nothing_fits_at_the_rest_pose():
+    # the rest pose parks the tool on the desk, below where any gesture may start
+    for name in G.GESTURES:
+        steps, _, why = plan(name, rest_pose())
+        assert steps is None and why == "the table", (name, why)
 
 
 def test_size_scales_the_motion():

@@ -31,8 +31,10 @@ DEFAULT_CFG = {
     # 732-2441 us, while an MG996R is nominally 500-2500 us for 180 deg. Any shortfall makes
     # every commanded angle larger than the angle achieved, and forward kinematics - which
     # only ever sees the command - then reports a pose the arm is not in.
-    # low-stress rest pose, in JOINT angles (deg): upper arm ~vertical, forearm folded down/in, gripper tucked
-    "rest": {"base": 0, "shoulder": -10, "elbow": 145, "wrist": 50},
+    # rest pose, in JOINT angles (deg): parked on the desk, so going limp there drops nothing. Upper
+    # arm leaning forward, forearm about level, the tool steeply down onto the desk 240 mm out (found
+    # for the measured arm in config.json; tune it on the bench with Calibrate > Set rest here)
+    "rest": {"base": 0, "shoulder": 55.3, "elbow": 6.4, "wrist": 108.3},
     "joints": [
         {"name": "base", "gain": 1.0,        "zero": 90, "sign": 1, "min": 5,  "max": 175},
         {"name": "shoulder", "gain": 1.0,    "zero": 90, "sign": 1, "min": 15, "max": 165},
@@ -317,6 +319,8 @@ class S:
     gesture_speed = 120.0
     gesture_last = ""     # what the last gesture did, for the Personality page
     voice_ptt = 0.0       # push-to-talk deadline while the Voice tab's button is held; the client resends every 100 ms
+    slow = 0.0            # deg/s cap while park() comes down onto the desk (0 = the speed slider alone)
+    held = None           # {x, y, name}: what a pick is holding, and the spot it came from
 
 V = None   # Vision instance (or None when the camera is off)
 FC = HT = None   # finger.FollowController / HandTracker: made on the first follow-on, kept after
@@ -415,18 +419,101 @@ def do_stop():
     S.creep = None; S.tgt = list(S.cur); S.tgt[5] = 90.0; S.cur[5] = 90.0
     log("STOP: holding position, gripper braked", "warn")
 
-def start_pick(x, y, closing):
-    if V is None: log("Pick needs the camera/vision module.", "err"); return
+HANDOVER = (310.0, 30.0, 240.0, -15.0)   # handover_x/y/z/pitch when there is no camera (vision.json has them)
+
+def start_seq(coro, what):
+    """Start one of the gripping sequences (pick, hand-over, put down, carry) as S.pick_task: one at
+    a time, STOP cancels it, and follow is switched off first. Returns whether it started."""
+    if S.pick_task and not S.pick_task.done():
+        coro.close(); log("A pick or hand-over is already running (press STOP to cancel it).", "warn"); return False
+    follow_off(f"{what} started")
+    S.pick_task = asyncio.create_task(coro)
+    return True
+
+def start_pick(x, y, closing, name="", bring=False):
+    """Pick the object at (x, y). It ends holding it at hover over the same spot, or with bring
+    at the hand-over point. Returns whether the pick started."""
+    if V is None: log("Pick needs the camera/vision module.", "err"); return False
     ok, why = V.pose_health()
     if not ok:
         log(f"Pick refused: {why}. Driving the arm from an unreliable pose is how objects get "
             "missed by centimetres - fix the pose first.", "err")
-        return
-    if S.pick_task and not S.pick_task.done(): log("A pick is already running (press STOP to cancel).", "warn"); return
-    follow_off("a pick started")
-    S.pick_task = asyncio.create_task(pick_seq(x, y, closing))
+        return False
+    if S.held:
+        log(f"Pick refused: already holding {S.held['name'] or 'something'}. Put it down or bring it over first.", "warn")
+        return False
+    return start_seq(pick_seq(x, y, closing, name, bring), "a pick")
 
-async def pick_seq(x, y, closing):
+def aim(x, y, z, pitch=None):
+    """The tool pitch nearest `pitch` (default: the current one) that puts the tool exactly on
+    (x, y, z), or None when no pitch does."""
+    p = fk(S.tgt, S.cfg)[1] if pitch is None else pitch
+    r = reachable_target(x, y, z, p, S.cfg, S.tgt[4], exact_only=True)
+    return r[3] if r is not None and not r[4] else None
+
+def handover_point():
+    s = V.s if V is not None else {}
+    return tuple(float(s.get(k, d)) for k, d in zip(("handover_x", "handover_y", "handover_z", "handover_pitch"), HANDOVER))
+
+async def carry(x, y, z, pitch, who):
+    """Move what the gripper holds to (x, y, z), squeezing on the way as a pick does while it lifts,
+    and braked on arrival: between moves the gear train holds it, so the 360 servo never drives for
+    longer than one move. Returns False, without moving, when the tool can't get there exactly."""
+    p = aim(x, y, z, pitch)
+    if p is None or not move_tip(x, y, z, lock=True, pitch=p, who=who, strict=True): return False
+    S.tgt[5] = clamp(float((V.s if V is not None else {}).get("grip_close", 50.0)), 0, 180)
+    try: await wait_arrived()
+    finally: S.tgt[5] = S.cur[5] = 90.0
+    return True
+
+async def carry_seq(x, y, z):
+    """The Camera tab's Hover while holding: carry it over the tapped spot."""
+    try:
+        if not S.live: log("Carry refused: Live is OFF, the arm would not move.", "err"); return
+        if not await carry(x, y, z, V.s["pick_pitch"], "carry"): log("Carry refused: the tool can't reach that spot exactly.", "err")
+    except asyncio.CancelledError: log("carry cancelled", "warn"); raise
+    except Exception as e: log(f"carry crashed: {e}", "err")
+
+async def handover_seq():
+    """Bring it to me: carry it to the hand-over point (toward the operator, up, and a little to their
+    right) and hold it there for "let go" or the Open button."""
+    try:
+        if not S.live: log("Hand-over refused: Live is OFF, the arm would not move.", "err"); return
+        if await carry(*handover_point(), "hand-over"): log("Here you go: say let go, or hold Open.", "ok")
+        else: log("Hand-over refused: the tool can't reach the hand-over point exactly "
+                  "(Camera > Setup > Pick settings).", "err")
+    except asyncio.CancelledError: log("hand-over cancelled", "warn"); raise
+    except Exception as e: log(f"hand-over crashed: {e}", "err")
+
+async def place_seq(back=False):
+    """Put it down: lower what is held to the pick's own grasp height, open, and come back up to hover.
+    Right under the tool, or (back) carried first to where it was picked."""
+    s = V.s; what = "put back" if back else "put down"
+    try:
+        if not S.live: log(f"{what.capitalize()} refused: Live is OFF, the arm would not move.", "err"); return
+        if back:
+            if not S.held: log("Put back refused: nothing was picked up to put back.", "warn"); return
+            x, y = S.held["x"], S.held["y"]
+        else: x, y, _ = fk(S.tgt, S.cfg)[0][-1]
+        tz = V.table_z(x, y); hover = tz + s["hover"]; down = max(s["z_floor"], tz + s["z_grasp_offset"])
+        if back and not await carry(x, y, hover, s["pick_pitch"], "put back"):
+            log("Put back refused: the tool can't reach the spot it came from exactly.", "err"); return
+        p = aim(x, y, down, s["pick_pitch"])
+        if p is None or not move_tip(x, y, down, lock=True, pitch=p, who=what, strict=True):
+            log(f"{what.capitalize()} refused: the tool can't reach the table here exactly. Put it back, or carry it "
+                "somewhere else first.", "err")
+            return
+        S.tgt[5] = clamp(s["grip_close"], 0, 180); await wait_arrived()     # held on the way down too
+        S.tgt[5] = clamp(s["grip_open"], 0, 180); log("opening gripper"); await asyncio.sleep(1.0)
+        S.held = None; S.tgt[5] = S.cur[5] = 90.0
+        pu = aim(x, y, hover, p)
+        if pu is not None: move_tip(x, y, hover, lock=True, pitch=pu, who="up", verbose=False); await wait_arrived()
+        log(f"{what.capitalize()}: done", "ok")
+    except asyncio.CancelledError: log(f"{what} cancelled", "warn"); raise
+    except Exception as e: log(f"{what} crashed: {e}", "err")
+    finally: S.tgt[5] = S.cur[5] = 90.0
+
+async def pick_seq(x, y, closing, name="", bring=False):
     s = V.s; drove = False
     try:
         if not S.live: log("Pick refused: Live is OFF, the arm would not move.", "err"); return
@@ -450,19 +537,98 @@ async def pick_seq(x, y, closing):
                 "pick pitch, hover height or z offset.", "err"); return
         await wait_arrived()
         S.tgt[5] = clamp(s["grip_close"], 0, 180); log("closing gripper"); await asyncio.sleep(1.5)
-        move_tip(x, y, hover, pitch=pp, who="lift"); await wait_arrived()
-        move_tip(s["drop_x"], s["drop_y"], s["drop_z"], pitch=pp, who="drop"); await wait_arrived()
-        S.tgt[5] = clamp(s["grip_open"], 0, 180); await asyncio.sleep(1.0)
-        log("PICK finished", "ok")
+        move_tip(x, y, hover, pitch=pp, who="lift"); await wait_arrived()     # still squeezing on the way up
+        S.held = {"x": x, "y": y, "name": name}
+        if not bring: log("PICK finished: holding it above where it was (bring it to me, put it down, put it back)", "ok")
+        elif await carry(*handover_point(), "hand-over"): log("PICK finished: here you go, say let go or hold Open", "ok")
+        else: log("PICK finished, holding it above where it was: the hand-over point can't be reached exactly", "warn")
     except asyncio.CancelledError:
         log("pick cancelled", "warn"); raise
     except Exception as e:
         log(f"pick crashed: {e}", "err")
     finally:
-        # The 360 gripper has no end position: left at grip_open it drives into its stop and
+        # The 360 gripper has no end position: left at grip_close it drives into its stop and
         # stalls until STOP (see HARDWARE.md, the dead-man's switch). However the pick ends,
-        # brake it, which also gives the release a fixed 1 s of opening.
+        # brake it. Holding, the gear train keeps the jaws shut; a carry squeezes again.
         if drove: S.tgt[5] = S.cur[5] = 90.0
+
+# ---------------- rest: park on the desk ----------------
+# Limp, the arm falls wherever gravity takes it, so the rest pose has the tool already on the desk. Getting
+# there is the delicate part: a straight joint-space move to a pose on the desk could sweep the tool across
+# it, so park() goes over the spot first and comes straight down through IK waypoints, slowly.
+REST_ABOVE_MM = 60.0       # park() comes straight down onto the rest pose from this high above it
+REST_STEP_MM = 10.0        # ...through an exact IK waypoint every this many mm
+REST_DESCENT_DPS = 20.0    # ...at this speed, whatever the speed slider says
+
+def rest_servos():
+    """The rest pose (config.json "rest", joint angles) as servo values for joints 0-3, and whether a
+    joint limit clipped it. The inverse of joint_angles(), gain included."""
+    R, J, servo, clipped = S.cfg["rest"], S.cfg["joints"], [], False
+    for i, a in enumerate([R["base"], R["shoulder"], R["elbow"], R["wrist"]]):
+        v = J[i]["zero"] + J[i]["sign"] * a / (J[i].get("gain", 1.0) or 1.0)
+        c = clamp(v, J[i]["min"], J[i]["max"]); clipped |= abs(c - v) > 0.05; servo.append(round(c, 1))
+    return servo, clipped
+
+def rest_approach(rest):
+    """Servo targets that bring the tool straight down onto `rest` (4 servo values), highest first: a
+    waypoint every REST_STEP_MM from REST_ABOVE_MM above it, each solved exactly at the pitch nearest
+    the rest pose's own (within 30 deg) that stays 3 deg clear of every joint limit. A height with no
+    such pitch is skipped; [] means nothing above it is reachable."""
+    J = S.cfg["joints"]
+    pts, p0 = fk(list(rest) + [90.0, 90.0], S.cfg); x, y, z0 = pts[-1]
+    def clear(s): return all(min(J[i]["min"], J[i]["max"]) + 3 <= s[i] <= max(J[i]["min"], J[i]["max"]) - 3 for i in range(4))
+    out = []
+    for k in range(int(REST_ABOVE_MM / REST_STEP_MM), 0, -1):
+        z = z0 + k * REST_STEP_MM
+        for q in sorted(range(-30, 31), key=abs):
+            servo, reach, lim = ik(x, y, z, p0 + q, S.cfg, 90.0)
+            if reach or lim or not clear(servo) or math.dist(fk(list(servo) + [90.0, 90.0], S.cfg)[0][-1], (x, y, z)) > 1.0: continue
+            out.append([round(v, 2) for v in servo]); break
+    return out
+
+async def settle(timeout=15.0):
+    """wait_arrived for a sequence that must never be left queued: False at once if Live goes off."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if not S.live: return False
+        if max(abs(S.tgt[i] - S.cur[i]) for i in range(5)) < 0.8: await asyncio.sleep(0.3); return True
+        await asyncio.sleep(0.05)
+    log(f"arm did not settle within {timeout:.0f}s", "warn")
+    return False
+
+async def park():
+    """Fold to the rest pose: straight up first if the tool is lower than the spot above the rest pose,
+    over to that spot, then straight down onto the desk at REST_DESCENT_DPS. True once it is there."""
+    rest, clipped = rest_servos()
+    await broadcast({"type": "restinfo", "servo": rest + [90.0, S.tgt[5]], "clipped": clipped})
+    if clipped: log("Rest pose: a joint limit clips it, so it is not quite the pose that was set", "warn")
+    path = rest_approach(rest)
+    if not path: log("Rest pose: nothing above it is reachable, so it goes there directly (slowly)", "warn")
+    try:
+        if path:
+            top = fk(path[0] + [90.0, 90.0], S.cfg)[0][-1][2]
+            x, y, z = fk(S.tgt, S.cfg)[0][-1]
+            pu = aim(x, y, top) if z < top - 1.0 else None
+            if pu is not None and move_tip(x, y, top, lock=True, pitch=pu, who="rest: up", strict=True, verbose=False):
+                if not await settle(): return False
+            S.tgt[:4] = path[0]; S.tgt[4] = 90.0
+            if not await settle(): return False
+        S.slow = REST_DESCENT_DPS
+        for wp in path[1:] + [rest]:
+            S.tgt[:4] = list(wp); S.tgt[4] = 90.0
+            if not await settle(): return False
+        S.tool = tool_from_tgt()
+        return True
+    finally:
+        S.slow = 0.0
+
+async def rest_seq():
+    """The Rest pose button (and "Dummy, rest pose"): park and stay engaged."""
+    try:
+        if await park(): log("Rest pose: parked on the desk", "ok"); await broadcast(S.tool)
+        else: log("Rest pose: stopped before it got there", "warn")
+    except asyncio.CancelledError:
+        log("Rest pose cancelled: the arm holds where it is", "warn"); raise
 
 # ---------------- finger follow ----------------
 # Messages that mean a person has taken the arm over. Checked once at the top of handle(), so a
@@ -716,7 +882,7 @@ async def control_loop():
         if S.live:
             max_dist = max(abs(S.tgt[i] - S.cur[i]) for i in range(6))
             if max_dist > 0.1:
-              spd = S.gesture_speed if S.gesture else S.speed
+              spd = S.gesture_speed if S.gesture else min(S.speed, S.slow) if S.slow else S.speed
               for i in range(6):
                 dist = S.tgt[i] - S.cur[i]
                 joint_speed_limit = (spd * dt) * (abs(dist) / max_dist)
@@ -752,6 +918,7 @@ async def control_loop():
                              "ang": joint_angles(S.tgt, S.cfg), "ranges": [[round(a), round(b)] for a, b in joint_ranges(S.cfg)], "tool": tool_state(),
                              "live": S.live, "speed": S.speed, "reach": S.reach, "limited": S.limited,
                              "hw": S.ser is not None, "engaged": S.engaged, "lost": S.ser is None and S.port is not None,
+                             "held": S.held,
                              "follow": {"on": S.follow, "state": S.follow_state, "status": S.follow_status,
                                         "target": S.follow_target, "clamped": S.follow_clamped,
                                         "hover": follow_hover() if V is not None else None,
@@ -808,6 +975,7 @@ async def handle(ws, m):
         if i == 5:
             # 360 servo needs the full 0-180 range for speed control
             S.tgt[i] = clamp(float(m["angle"]), 0.0, 180.0)
+            if S.tgt[i] > 95.0: S.held = None      # opening lets go of whatever a pick was holding
         else:
             J = S.cfg["joints"][i]
             S.tgt[i] = clamp(float(m["angle"]), J["min"], J["max"])
@@ -834,15 +1002,12 @@ async def handle(ws, m):
     elif t == "resync":
         S.tool = tool_from_tgt(); await ws.send_json(S.tool)
     elif t == "rest":
-        R, J, servo, clipped = S.cfg["rest"], S.cfg["joints"], [], False
-        for i, a in enumerate([R["base"], R["shoulder"], R["elbow"], R["wrist"]]):
-            v = J[i]["zero"] + J[i]["sign"] * a; c = clamp(v, J[i]["min"], J[i]["max"])
-            clipped |= abs(c - v) > 1e-6; servo.append(round(c, 1))
-        S.tgt[:4] = servo; S.tgt[4] = 90.0
-        S.tool = tool_from_tgt(); await broadcast(S.tool)
-        await broadcast({"type": "restinfo", "servo": S.tgt[:5] + [S.tgt[5]], "clipped": clipped})
+        # a sequence now, not a target: it parks on the desk (park()), which takes a moving arm
+        if not S.live: log("Rest pose needs Live on: it comes down onto the desk slowly, so the arm has to be moving.", "warn")
+        else: voice_cancel(); S.voice_task = asyncio.create_task(rest_seq())
     elif t == "relax":
         S.limp = int(m["mask"]) & 63
+        if S.limp & 0x20: S.held = None    # a limp gripper may let go
         if S.ser:
             try: S.ser.write(f"R {S.limp}\n".encode()); S.engaged = True
             except Exception as e: print("serial error:", e)
@@ -856,9 +1021,14 @@ async def handle(ws, m):
     elif t == "speed": S.speed = clamp(float(m["dps"]), 5, 180)
     elif t == "home":
         S.tgt = list(START_POSE); S.tool = tool_from_tgt(); await broadcast(S.tool)
-    elif t in ("setzero", "flip", "setlim", "links"):
+    elif t in ("setzero", "flip", "setlim", "links", "setrest"):
         if t == "setzero":
             i = int(m["joint"]); S.cfg["joints"][i]["zero"] = round(S.tgt[i], 1)
+        elif t == "setrest":       # Calibrate > Set rest here: wherever the arm was jogged to park
+            a = [round(v, 1) for v in joint_angles(S.tgt, S.cfg)]
+            S.cfg["rest"] = dict(zip(("base", "shoulder", "elbow", "wrist"), a))
+            x, y, z = fk(S.tgt, S.cfg)[0][-1]
+            log(f"Rest pose set here: tool at ({x:.0f}, {y:.0f}, {z:.0f}), joints {a}", "ok")
         elif t == "flip":
             i = int(m["joint"]); S.cfg["joints"][i]["sign"] *= -1
         elif t == "setlim":
@@ -884,7 +1054,8 @@ async def handle(ws, m):
         if m.get("name") in gestures.GESTURES:
             r, ok = await voice_gesture(m["name"])
             log(f"Gesture: {r}", "ok" if ok else "warn")
-    elif V is None and t in ("cam_click", "goto_click", "pick_click", "pick_detected", "vset", "detect", "pose_lock", "follow_z",
+    elif t == "handover": start_seq(handover_seq(), "a hand-over")    # needs no camera: it's a fixed point
+    elif V is None and t in ("cam_click", "goto_click", "pick_click", "pick_detected", "put_down", "vset", "detect", "pose_lock", "follow_z",
                              "marker_record", "marker_apply", "marker_reset", "marker_tape",
                              "roll_zero", "roll_flip", "jaws"):
         log("Vision is not running (camera files missing, --no-camera, or OpenCV not installed).", "err")
@@ -913,8 +1084,10 @@ async def handle(ws, m):
             if not ok: log(f"heads up: {why} - the arm is going where the software THINKS you "
                            "clicked, which may not be where you clicked.", "warn")
             x, y = V.click[0], V.click[1]; tz = V.table_z(x, y)
-            z = tz + V.s["hover"] if m.get("mode") == "hover" else max(V.s["z_floor"], tz + V.s["z_grasp_offset"])
-            move_tip(x, y, z, pitch=V.s["pick_pitch"], who="go to click (" + str(m.get("mode")) + ")")
+            if S.held and m.get("mode") == "hover": start_seq(carry_seq(x, y, tz + V.s["hover"]), "a carry")
+            else:
+                z = tz + V.s["hover"] if m.get("mode") == "hover" else max(V.s["z_floor"], tz + V.s["z_grasp_offset"])
+                move_tip(x, y, z, pitch=V.s["pick_pitch"], who="go to click (" + str(m.get("mode")) + ")")
     elif t == "pick_click":
         if V.click is None: log("Click a point on the video first.", "warn")
         else: start_pick(V.click[0], V.click[1], None)
@@ -923,7 +1096,8 @@ async def handle(ws, m):
         if not b: log("Nothing detected. Turn on Detect and make sure the object is visible.", "warn")
         else:
             log(f"picking {b['name']} ({b['conf']:.2f}) at ({b['x']:.1f}, {b['y']:.1f})")
-            start_pick(b["x"], b["y"], b["closing"])
+            start_pick(b["x"], b["y"], b["closing"], b["name"])
+    elif t == "put_down": start_seq(place_seq(bool(m.get("back"))), "putting it back" if m.get("back") else "putting it down")
     elif t == "vset": V.set_setting(m["key"], m.get("value"))
     elif t == "detect":
         V.detect_on = bool(m["on"])
@@ -1056,8 +1230,7 @@ async def voice_relax():
     """'Dummy, relax': fold to the rest pose and only then go limp, so the arm never drops from mid-air.
     STOP, any manual control or another spoken command cancels it while it folds."""
     try:
-        await handle(VOICE, {"type": "rest"}); rest = [round(v, 1) for v in S.tgt[:4]]
-        arrived = await wait_arrived(timeout=15.0)
+        arrived = await park(); rest = rest_servos()[0]
         # Anything can happen during a fold (follow, a reconnect, Live off). Go limp only if the arm
         # is still headed for, and at, exactly the rest pose it was sent to.
         why = ("Live is off" if not S.live else "follow is on" if S.follow
