@@ -52,6 +52,21 @@ See ARCHITECTURE.md (Voice) for how it works and TEST_INSTRUCTIONS.md §6 for th
 **Then personality** (`feat/personality`): a nod for a bare "Dummy", a head shake for "are you dumb?",
 a happy dance for "good boy". See ARCHITECTURE.md (Personality) and TEST_INSTRUCTIONS.md §7.
 
+**Then the rest of §7** (`feat/voice-commands`, 2026-10-25): about fifty commands, most of tiers 0–5
+below. Bounded steps with amounts ("left 3 cm"), the timed gripper, rest / wake up / undo / again,
+speed and follow height, find / pick up / bring me the <object>, hand-over and put-down, questions
+answered with a nod or a shake, and voice meta commands, plus four emotes (wave, bow, a puzzled head
+tilt, a sad droop). Where it differs from the survey:
+- **Confirmation is a setting** (Confirm picks, on by default) and covers picks only. A confirmed
+  pick hovers over what it found first, so the readback is the arm itself, not speech.
+- **No spoken replies.** Answers go to the Heard list, with a nod or a shake for yes / no questions.
+- **A follow-up window** after steps, as §3.4 suggested, but restricted to steps, again, undo, the
+  speed words and stop.
+- **Live stays on the tablet**, on and off.
+- The pick itself changed: it now holds the object at hover, and hand-over / put down finish it.
+
+See ARCHITECTURE.md (Voice: the commands) and TEST_INSTRUCTIONS.md §8.
+
 ## 0. What already exists to build on
 
 | Existing piece | Why it matters for hearing |
@@ -283,7 +298,8 @@ that" while pointing uses the finger-follow target.
 
 Every command maps onto an **existing** `handle()` message. Directions are in **your** frame,
 facing the robot (HARDWARE.md): "left" is your left, which is the robot's right, which is −Y.
-"Forward / away" is +X, and "toward me" is −X.
+"Toward me" is +X and "away" is −X: the operator stands in front, where the arm reaches. (This
+said the opposite before it was built; the owner confirmed the side on 2026-10-25.)
 
 | Tier | You say | Becomes | Confirm? | Follow |
 |---|---|---|---|---|
