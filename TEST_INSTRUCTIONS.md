@@ -450,7 +450,8 @@ so expect a gap of a centimetre or so. Keep a hand near STOP, speed **60**.
    Pick settings → Hand-over X/Y/Z/pitch), squeezing on the way, and stops. Hold the gripper's
    **Open** button to take it. If the spot is awkward, change the hand-over fields.
 3. Pick again, tap another spot on the video, press **Hover**: it carries the pen there. **Put down**
-   lowers it to the table, opens, and rises to hover.
+   lowers it to the table, **opens for a full second**, and rises to hover, leaving the pen behind.
+   Try it once at speed **20** too: it used to put the pen down and never open.
 4. While holding, press **Pick**: refused (`already holding pen`).
 
 ### 8d. Voice commands

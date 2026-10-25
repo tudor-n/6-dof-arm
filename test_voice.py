@@ -497,6 +497,29 @@ def test_start_pose_and_live_on_leave_the_gripper_braked():
     _server(go)
 
 
+def _hover_over(sv, x, y, z=135.0):
+    p = sv.reachable_target(x, y, z, -60.0, sv.S.cfg, 90.0, exact_only=True)[3]
+    return sv.ik(x, y, z, p, sv.S.cfg, 90.0)[0]
+
+
+def test_put_down_really_opens_the_gripper_even_at_speed_20():
+    """The gripper's command is a speed: ramped under a slow speed slider, the 1 s open after the
+    squeeze never got back past 90, and the object stayed in the jaws."""
+    async def go(sv, ser, page):
+        import copy, vision
+        S = sv.S; S.speed = 20.0
+        sv.V = _camera(s=copy.deepcopy(vision.DEFAULT_SETTINGS), table_z=lambda x, y: 5.0)
+        S.tgt[:4] = _hover_over(sv, 200.0, 0.0); S.tgt[5] = 90.0; S.cur = list(S.tgt)
+        S.held = {"x": 200.0, "y": 0.0, "name": "pen"}
+        task = asyncio.create_task(sv.place_seq()); opening = 0.0
+        while not task.done():
+            if S.cur[5] >= 129.0: opening += 0.02
+            await asyncio.sleep(0.02)
+        assert opening >= 0.8, f"opened at full speed for only {opening:.2f} s of the 1 s"
+        assert S.tgt[5] == S.cur[5] == 90.0 and S.held is None
+    _server(go)
+
+
 def test_a_command_overtaken_by_stop_is_dropped():
     async def go(sv, ser, page):
         ev = {"kind": "command", "cmd": "home", "say": "start pose", "gen": sv.HEAR.gen}

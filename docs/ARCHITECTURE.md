@@ -78,6 +78,13 @@ and a point no pitch reaches is refused without moving. One gripping sequence ru
 (`start_seq`). Opening the gripper (a grip value above 95), a put-down, Relax grip or Relax
 all clears `S.held`.
 
+**Gripper commands in these sequences are set at once** (`grip_now()`, target and current, as the
+brake always was), not ramped under the speed slider like a joint. The number is a speed, not a
+position: ramped, a timed pulse spent its time getting there. A put-down's 1 s open came right
+after the squeeze, and at speed 20 it ended before the command was even back past 90, so the
+gripper never opened. This covers the pick's open and close, the carry squeeze, put down, and the
+spoken open / close. The tablet's hold-to-move grip buttons and the gesture claps keep their ramps.
+
 **Rest pose.** Limp, the arm falls wherever gravity takes it, so the rest pose
 (`config.json` `rest`, joint angles) parks the tool on the desk: 240 mm out, tool pitched
 −80°, upper arm leaning forward. It was found from the calibrated kinematics: the elbow and
