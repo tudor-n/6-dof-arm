@@ -439,6 +439,9 @@ so expect a gap of a centimetre or so. Keep a hand near STOP, speed **60**.
    Advanced → **Set rest here**, and repeat 1–2. The log line has the new joint angles.
 4. **"Dummy, relax"** parks the same way, and only then goes limp. **Relax all** stays immediate
    anywhere else: Rest pose first is the gentle way.
+5. Relaxed at the rest pose, press **Wake all**. The servos engage where the arm is (no jump), then
+   it lifts off the desk and travels to the **start pose** at the speed slider's pace, gripper
+   still.
 
 ### 8c. Pick, hold, hand-over, put down
 
@@ -450,7 +453,8 @@ so expect a gap of a centimetre or so. Keep a hand near STOP, speed **60**.
    Pick settings → Hand-over X/Y/Z/pitch), squeezing on the way, and stops. Hold the gripper's
    **Open** button to take it. If the spot is awkward, change the hand-over fields.
 3. Pick again, tap another spot on the video, press **Hover**: it carries the pen there. **Put down**
-   lowers it to the table, opens, and rises to hover.
+   lowers it to the table, **opens for a full second**, and rises to hover, leaving the pen behind.
+   Try it once at speed **20** too: it used to put the pen down and never open.
 4. While holding, press **Pick**: refused (`already holding pen`).
 
 ### 8d. Voice commands

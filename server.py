@@ -456,6 +456,13 @@ def aim(x, y, z, pitch=None):
     r = reachable_target(x, y, z, p, S.cfg, S.tgt[4], exact_only=True)
     return r[3] if r is not None and not r[4] else None
 
+def grip_now(v):
+    """Set the 360 gripper's command at once, target and current, as the brake always has. It is a
+    speed, not a position: ramped under the speed slider like a joint, a timed pulse spends its time
+    getting there, and an open right after a squeeze could end before the command was even back
+    past 90. At speed 20 a put-down never opened at all."""
+    S.tgt[5] = S.cur[5] = clamp(float(v), 0, 180)
+
 def handover_point():
     s = V.s if V is not None else {}
     return tuple(float(s.get(k, d)) for k, d in zip(("handover_x", "handover_y", "handover_z", "handover_pitch"), HANDOVER))
@@ -466,7 +473,7 @@ async def carry(x, y, z, pitch, who):
     longer than one move. Returns False, without moving, when the tool can't get there exactly."""
     p = aim(x, y, z, pitch)
     if p is None or not move_tip(x, y, z, lock=True, pitch=p, who=who, strict=True): return False
-    S.tgt[5] = clamp(float((V.s if V is not None else {}).get("grip_close", 50.0)), 0, 180)
+    grip_now((V.s if V is not None else {}).get("grip_close", 50.0))
     try: await wait_arrived()
     finally: S.tgt[5] = S.cur[5] = 90.0
     return True
@@ -508,8 +515,8 @@ async def place_seq(back=False):
             log(f"{what.capitalize()} refused: the tool can't reach the table here exactly. Put it back, or carry it "
                 "somewhere else first.", "err")
             return
-        S.tgt[5] = clamp(s["grip_close"], 0, 180); await wait_arrived()     # held on the way down too
-        S.tgt[5] = clamp(s["grip_open"], 0, 180); log("opening gripper"); await asyncio.sleep(1.0)
+        grip_now(s["grip_close"]); await wait_arrived()     # held on the way down too
+        grip_now(s["grip_open"]); log("opening gripper"); await asyncio.sleep(1.0)
         S.held = None; S.tgt[5] = S.cur[5] = 90.0
         pu = aim(x, y, hover, p)
         if pu is not None: move_tip(x, y, hover, lock=True, pitch=pu, who="up", verbose=False); await wait_arrived()
@@ -530,7 +537,7 @@ async def pick_seq(x, y, closing, name="", bring=False):
                 f"{s['z_floor']:.1f}, so the tip goes to {grasp:.1f} instead. While this keeps firing, "
                 f"z_grasp_offset has NO EFFECT - z_floor is setting the grasp depth on its own, and "
                 f"adjusting z_grasp_offset will change nothing. Lower z_floor to hand control back.", "warn")
-        S.tgt[5] = clamp(s["grip_open"], 0, 180); drove = True
+        grip_now(s["grip_open"]); drove = True
         if closing is not None:
             az = math.degrees(math.atan2(y, x)); r = world_to_servo_roll(closing, az); S.tgt[4] = r
             log(f"roll: jaws should close along {closing:.0f} deg (table), arm azimuth {az:.0f} deg -> roll servo {r:.0f}")
@@ -541,7 +548,7 @@ async def pick_seq(x, y, closing, name="", bring=False):
             log("PICK ABORTED: the grasp point cannot be reached exactly. Try a different object position, "
                 "pick pitch, hover height or z offset.", "err"); return
         await wait_arrived()
-        S.tgt[5] = clamp(s["grip_close"], 0, 180); log("closing gripper"); await asyncio.sleep(1.5)
+        grip_now(s["grip_close"]); log("closing gripper"); await asyncio.sleep(1.5)
         move_tip(x, y, hover, pitch=pp, who="lift"); await wait_arrived()     # still squeezing on the way up
         S.held = {"x": x, "y": y, "name": name}
         if not bring: log("PICK finished: holding it above where it was (bring it to me, put it down, put it back)", "ok")
@@ -1016,6 +1023,11 @@ async def handle(ws, m):
         if S.ser:
             try: S.ser.write(f"R {S.limp}\n".encode()); S.engaged = True
             except Exception as e: print("serial error:", e)
+        if not S.limp:
+            # Wake all: every servo engages where it was last told to be (where a parked arm really is,
+            # so nothing jumps), then the arm travels to the start pose under the speed limit, gripper braked
+            S.tgt = list(START_POSE); S.tgt[5] = S.cur[5] = 90.0
+            S.tool = tool_from_tgt(); await broadcast(S.tool)
     elif t == "live":
         S.live = bool(m["on"])
         log("Live " + ("ON" if S.live else "OFF"), "ok" if S.live else "warn")
@@ -1345,7 +1357,7 @@ async def voice_grip(opening, secs):
     s = V.s if V is not None else {}
     try:
         if S.limp & 0x20: S.tgt[5] = S.cur[5] = 90.0     # braked first: relaxed mid-drive, it must not wake up driving
-        S.tgt[5] = clamp(float(s.get("grip_open", 130.0) if opening else s.get("grip_close", 50.0)), 0, 180)
+        grip_now(s.get("grip_open", 130.0) if opening else s.get("grip_close", 50.0))
         if opening: S.held = None
         await asyncio.sleep(secs)
     finally:

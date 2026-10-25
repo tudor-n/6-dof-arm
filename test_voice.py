@@ -497,6 +497,48 @@ def test_start_pose_and_live_on_leave_the_gripper_braked():
     _server(go)
 
 
+def _hover_over(sv, x, y, z=135.0):
+    p = sv.reachable_target(x, y, z, -60.0, sv.S.cfg, 90.0, exact_only=True)[3]
+    return sv.ik(x, y, z, p, sv.S.cfg, 90.0)[0]
+
+
+def test_wake_all_engages_where_it_is_then_goes_to_the_start_pose():
+    async def go(sv, ser, page):
+        S = sv.S; S.speed = 60.0
+        rest = sv.rest_servos()[0]
+        S.tgt[:4] = rest; S.tgt[5] = 100.0; S.cur = list(S.tgt); S.limp = 0x3F     # parked and relaxed
+        await sv.handle(page, {"type": "relax", "mask": 0})
+        assert S.limp == 0 and "R 0" in [w for w, _ in ser.sent], ser.sent[-3:]
+        assert S.tgt[:5] == sv.START_POSE[:5] and S.tgt[5] == S.cur[5] == 90.0, S.tgt
+        await asyncio.sleep(0.1)
+        assert S.cur[:4] != rest and S.cur[:4] != sv.START_POSE[:4], "it travels there, it doesn't jump"
+        t0 = time.time()
+        while max(abs(a - b) for a, b in zip(S.cur[:5], sv.START_POSE[:5])) > 0.5 and time.time() - t0 < 15: await asyncio.sleep(0.05)
+        assert max(abs(a - b) for a, b in zip(S.cur[:5], sv.START_POSE[:5])) <= 0.5, S.cur
+        before = list(S.tgt)
+        await sv.handle(page, {"type": "relax", "mask": 32})                  # Relax grip moves nothing
+        assert S.tgt == before
+    _server(go)
+
+
+def test_put_down_really_opens_the_gripper_even_at_speed_20():
+    """The gripper's command is a speed: ramped under a slow speed slider, the 1 s open after the
+    squeeze never got back past 90, and the object stayed in the jaws."""
+    async def go(sv, ser, page):
+        import copy, vision
+        S = sv.S; S.speed = 20.0
+        sv.V = _camera(s=copy.deepcopy(vision.DEFAULT_SETTINGS), table_z=lambda x, y: 5.0)
+        S.tgt[:4] = _hover_over(sv, 200.0, 0.0); S.tgt[5] = 90.0; S.cur = list(S.tgt)
+        S.held = {"x": 200.0, "y": 0.0, "name": "pen"}
+        task = asyncio.create_task(sv.place_seq()); opening = 0.0
+        while not task.done():
+            if S.cur[5] >= 129.0: opening += 0.02
+            await asyncio.sleep(0.02)
+        assert opening >= 0.8, f"opened at full speed for only {opening:.2f} s of the 1 s"
+        assert S.tgt[5] == S.cur[5] == 90.0 and S.held is None
+    _server(go)
+
+
 def test_a_command_overtaken_by_stop_is_dropped():
     async def go(sv, ser, page):
         ev = {"kind": "command", "cmd": "home", "say": "start pose", "gen": sv.HEAR.gen}
