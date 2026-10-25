@@ -6,7 +6,7 @@
    python server.py --port COM5 --camera 1 / --no-camera
    Voice tab (hearing.py): pip install faster-whisper nvidia-cublas-cu12
 """
-import argparse, asyncio, collections, copy, json, math, sys, time
+import argparse, asyncio, collections, copy, json, math, random, sys, time
 from pathlib import Path
 from aiohttp import web, WSMsgType
 import gestures
@@ -320,6 +320,9 @@ class S:
     gesture_last = ""     # what the last gesture did, for the Personality page
     voice_ptt = 0.0       # push-to-talk deadline while the Voice tab's button is held; the client resends every 100 ms
     slow = 0.0            # deg/s cap while park() comes down onto the desk (0 = the speed slider alone)
+    voice_undo = collections.deque(maxlen=10)   # the poses before the last spoken steps, for "undo"
+    voice_again = None    # (command, amount) of the last spoken step, for "again"
+    voice_ask = None      # {what, until, fut}: a spoken pick waiting for "yes"
     held = None           # {x, y, name}: what a pick is holding, and the spot it came from
 
 V = None   # Vision instance (or None when the camera is off)
@@ -1176,9 +1179,13 @@ def voice_from_thread(ev):
 
 def voice_status():
     vs = HEAR.status(); vs["gesture"] = {"on": bool(S.gesture), "last": S.gesture_last}
+    a = S.voice_ask
+    vs["ask"] = {"what": a["what"], "left": round(max(0.0, a["until"] - time.time()), 1)} if a else None
     return vs
 
-def voice_replay(): return ([voice_status()] + [{"type": "voice_heard", "ev": e} for e in VOICEQ]) if HEAR is not None else []
+def voice_replay():
+    if HEAR is None: return []
+    return [voice_status(), {"type": "voice_catalog", "groups": HEAR.catalog()}] + [{"type": "voice_heard", "ev": e} for e in VOICEQ]
 
 def voice_cancel():
     try: me = asyncio.current_task()
@@ -1203,28 +1210,284 @@ async def voice_msg(t, m):
         elif op == "quiet": HEAR.quiet_start()
     elif t == "voice_mics": await asyncio.get_running_loop().run_in_executor(None, HEAR.refresh_mics)
 
-async def voice_act(cmd, say):
-    """Do a spoken command. Returns (what happened, ok)."""
+# ---------- spoken commands ----------
+# The operator stands in front of the arm, facing it: their left is the robot's right (-Y), toward them is +X.
+TOWARD = {"up": (0, 0, 1), "down": (0, 0, -1), "left": (0, -1, 0), "right": (0, 1, 0), "toward": (1, 0, 0), "away": (-1, 0, 0)}
+STEP_MM = (10.0, 20.0, 50.0)                 # a bit / plain / a lot; a number is capped at the last
+STEP_DEG = {"turn": (5.0, 15.0, 45.0), "tilt": (5.0, 15.0, 45.0), "roll": (10.0, 30.0, 90.0)}
+GRIP_S = {"open": (0.4, 1.0, 2.5), "close": (0.4, 1.5, 2.5)}   # seconds of drive, then the brake
+SPEEDS = (20.0, 60.0, 120.0, 180.0)          # the speed buttons
+STEPS = frozenset(TOWARD) | {"turn_left", "turn_right", "tilt_up", "tilt_down", "roll_left", "roll_right", "open", "close"}
+AFTER_STEP = STEPS | {"again", "undo", "stop", "slower", "faster"}   # all the no-name window after a step takes
+ASK_S = 8.0                                  # how long a spoken pick waits over the object for "yes"
+
+def voice_amount(steps, arg, numbers=True):
+    """(amount, note) for a step: plain, a bit or a lot, or the number said (cm -> mm), capped."""
+    small, plain, most = steps
+    if not arg: return plain, ""
+    if numbers and arg.get("n") is not None:
+        n = arg["n"] * (10.0 if arg.get("unit") == "cm" else 1.0)
+        return (most, f" (asked {n:g}: {most:g} is the most per step)") if n > most else (n, "")
+    return {"small": small, "big": most}.get(arg.get("size"), plain), ""
+
+async def voice_react(name):
+    """A nod or a shake that goes with an answer, when one can run (never in dry run)."""
+    if HEAR.s["personality"] and not HEAR.s["dry_run"]: await voice_gesture(name, spoken=True)
+
+async def voice_note(ev, text, ok):
+    """A spoken command that finishes later (find, a pick) reports how it went in place of its first result."""
+    log(f"Voice: {text}", "ok" if ok else "warn")
+    if ev is None: return
+    ev["result"], ev["ok"] = text, ok
+    await broadcast({"type": "voice_heard", "ev": ev})
+
+def voice_answer(yes):
+    """Yes or no to a pick waiting over its object."""
+    a = S.voice_ask
+    if a is None or a["fut"].done(): return "nothing to confirm", False
+    a["fut"].set_result(yes)
+    return ("picking it up" if yes else "not picking it up"), True
+
+async def voice_ask(what):
+    """Wait ASK_S for a spoken yes: True for yes; False for no, silence, or anything else said meanwhile.
+    "Yes", "no" and "stop" need no name while it waits."""
+    secs = ASK_S; fut = asyncio.get_running_loop().create_future()
+    S.voice_ask = {"what": what, "until": time.time() + secs, "fut": fut}
+    HEAR.keep_awake(secs, {"confirm", "cancel", "stop"}); HEAR.sound("ask")
+    try: return await asyncio.wait_for(fut, secs)
+    except asyncio.TimeoutError: return False
+    finally:
+        if S.voice_ask and S.voice_ask["fut"] is fut: S.voice_ask = None; HEAR.keep_awake(0)
+
+async def voice_sight(obj, secs=8.0):
+    """The detection to act on, once it has been seen in 3 frames running (and is `obj`, if named), or None."""
+    t0 = time.time()
+    while time.time() - t0 < secs:
+        b = V.best_target() if V is not None else None
+        if b and len(V.track) >= 3 and (obj is None or b["name"] == obj): return b
+        await asyncio.sleep(0.1)
+    return None
+
+def voice_snapshot(): S.voice_undo.append(list(S.tgt[:5]))
+
+async def v_follow(cmd, say, arg, ev):
+    if S.follow: return "already following", True
+    why = follow_on()
+    return ("following your finger", True) if S.follow else (f"refused: {why}", False)
+
+async def v_pose_cmd(cmd, say, arg, ev):
+    if cmd == "relax": S.voice_task = asyncio.create_task(voice_relax()); return "parking on the desk, then relaxing", True
+    if cmd == "rest": await handle(VOICE, {"type": "rest"}); return "parking on the desk", True
+    if cmd == "wake": await handle(VOICE, {"type": "relax", "mask": 0})
+    await handle(VOICE, {"type": "home"}); return ("awake: " if cmd == "wake" else "") + "going to the start pose", True
+
+async def v_step(cmd, say, arg, ev):
+    """A bounded move of the tool, in the operator's frame. While following, up / down are the hover height."""
+    mm, note = voice_amount(STEP_MM, arg)
+    if S.follow and cmd in ("up", "down") and V is not None:
+        set_follow_hover(follow_hover() + (mm if cmd == "up" else -mm))
+        return f"follow height {follow_hover():.0f} mm{note}", True
+    if S.limp & 0x0F: return "refused: the arm is relaxed (say wake up first)", False
+    follow_off(f'you said "{say}"', "info")
+    x, y, z = fk(S.tgt, S.cfg)[0][-1]; d = TOWARD[cmd]
+    x, y, z = x + d[0] * mm, y + d[1] * mm, z + d[2] * mm
+    p = aim(x, y, z)            # hitting the point matters more than holding the wrist angle, as in follow
+    voice_snapshot()
+    if p is None or not move_tip(x, y, z, lock=True, pitch=p, who=f"voice: {say}", strict=True):
+        S.voice_undo.pop(); await voice_react("shake")
+        return f"can't go {say} {mm:g} mm from here (reach or a joint limit)", False
+    return f"moved {say} {mm:g} mm{note}", True
+
+async def v_turn(cmd, say, arg, ev):
+    if S.limp & 0x0F: return "refused: the arm is relaxed (say wake up first)", False
+    deg, note = voice_amount(STEP_DEG["turn"], arg)
+    J = S.cfg["joints"][0]
+    v = S.tgt[0] + J["sign"] * (-deg if cmd == "turn_left" else deg) / (J.get("gain", 1.0) or 1.0)   # your left: -yaw
+    if not min(J["min"], J["max"]) <= v <= max(J["min"], J["max"]):
+        await voice_react("shake"); return f"can't {say} {deg:g}\u00b0: the base limit", False
+    voice_snapshot(); S.tgt[0] = v
+    return f"turned {say[5:]} {deg:g}\u00b0{note}", True
+
+async def v_tilt(cmd, say, arg, ev):
+    if S.limp & 0x0F: return "refused: the arm is relaxed (say wake up first)", False
+    pts, p = fk(S.tgt, S.cfg); x, y, z = pts[-1]
+    deg, note = voice_amount(STEP_DEG["tilt"], arg)
+    q = -90.0 if cmd == "point_down" else p + (deg if cmd == "tilt_up" else -deg)
+    voice_snapshot()
+    if not move_tip(x, y, z, lock=True, pitch=q, who=f"voice: {say}", strict=True):
+        S.voice_undo.pop(); await voice_react("shake")
+        return f"can't {say} here (reach or a joint limit)", False
+    return ("pointing straight down" if cmd == "point_down" else f"tilted {say[5:]} {deg:g}\u00b0{note}"), True
+
+async def v_roll(cmd, say, arg, ev):
+    """Wrist roll as the operator sees it: a positive roll tips the top of the tool toward +Y (tool_offset),
+    which is their right."""
+    if S.limp & 0x0F: return "refused: the arm is relaxed (say wake up first)", False
+    J = S.cfg["joints"][4]; deg, note = voice_amount(STEP_DEG["roll"], arg)
+    v = J["zero"] if cmd == "roll_center" else S.tgt[4] + J["sign"] * (-deg if cmd == "roll_left" else deg) / (J.get("gain", 1.0) or 1.0)
+    if not min(J["min"], J["max"]) <= v <= max(J["min"], J["max"]):
+        await voice_react("shake"); return f"can't {say} {deg:g}\u00b0: the roll limit", False
+    voice_snapshot(); S.tgt[4] = v
+    return ("wrist straight" if cmd == "roll_center" else f"rolled {say[5:]} {deg:g}\u00b0{note}"), True
+
+async def v_grip(cmd, say, arg, ev):
+    secs, _ = voice_amount(GRIP_S[cmd], arg, numbers=False)
+    S.voice_task = asyncio.create_task(voice_grip(cmd == "open", secs))
+    return f"{'opening' if cmd == 'open' else 'closing'} for {secs:g} s", True
+
+async def voice_grip(opening, secs):
+    """One timed pulse of the 360 gripper, then the brake: STOP, another command or the end of it."""
+    s = V.s if V is not None else {}
+    try:
+        if S.limp & 0x20: S.tgt[5] = S.cur[5] = 90.0     # braked first: relaxed mid-drive, it must not wake up driving
+        S.tgt[5] = clamp(float(s.get("grip_open", 130.0) if opening else s.get("grip_close", 50.0)), 0, 180)
+        if opening: S.held = None
+        await asyncio.sleep(secs)
+    finally:
+        S.tgt[5] = S.cur[5] = 90.0
+
+async def v_undo(cmd, say, arg, ev):
+    if not S.voice_undo: return "nothing to undo", False
+    if S.limp & 0x0F: return "refused: the arm is relaxed (say wake up first)", False
+    S.tgt[:5] = S.voice_undo.pop(); S.tool = tool_from_tgt()
+    return "back to where it was", True
+
+async def v_again(cmd, say, arg, ev):
+    if not S.voice_again: return "nothing to repeat", False
+    from hearing import SAY
+    c, a = S.voice_again
+    return await voice_act(c, SAY.get(c, c), a, ev)
+
+async def v_pick(cmd, say, arg, ev):
+    """Pick (and with bring, hand over) the named object, or whatever Detect sees now."""
+    if V is None: return "refused: picking needs the camera", False
+    if S.held: return f"refused: already holding {S.held['name'] or 'something'} (put it down first)", False
+    ok, why = V.pose_health()
+    if not ok: return f"refused: {why}", False
+    obj = (arg or {}).get("obj")
+    if obj: await handle(VOICE, {"type": "detect", "on": True, "prompt": obj})
+    elif not V.detect_on: return "refused: Detect is off (say pick up the ... and a name)", False
+    S.voice_task = asyncio.create_task(voice_pick(obj, cmd == "bring", ev))
+    return f"looking for {obj or 'it'}", True
+
+async def voice_pick(obj, bring, ev):
+    b = await voice_sight(obj)
+    if not b: await voice_note(ev, f"no {obj or 'object'} in sight", False); await voice_react("shake"); return
+    what = f"{b['name']} {b['conf']:.2f} at ({b['x']:.0f}, {b['y']:.0f})"
+    if HEAR.s["pick_confirm"]:
+        s = V.s; z = V.table_z(b["x"], b["y"]) + s["hover"]
+        p = aim(b["x"], b["y"], z, s["pick_pitch"])
+        if p is None or not move_tip(b["x"], b["y"], z, lock=True, pitch=p, who="voice: over it", strict=True):
+            await voice_note(ev, f"{what}: can't hover over it exactly", False); await voice_react("shake"); return
+        if not await settle(): await voice_note(ev, f"{what}: stopped before it got there", False); return
+        await voice_note(ev, f"{what}: say yes to pick it up", True)
+        if not await voice_ask(f"pick up {b['name']}"): await voice_note(ev, f"{what}: not picked", False); return
+    if start_pick(b["x"], b["y"], b["closing"], b["name"], bring):
+        await voice_note(ev, f"picking up {what}" + (", then bringing it over" if bring else ""), True)
+    else: await voice_note(ev, f"{what}: the pick was refused (see the log)", False)
+
+async def v_find(cmd, say, arg, ev):
+    if V is None: return "refused: no camera", False
+    obj = (arg or {}).get("obj")
+    if obj: await handle(VOICE, {"type": "detect", "on": True, "prompt": obj})
+    elif not V.detect_on: return "Detect is off (say find the ... and a name)", False
+    task = asyncio.create_task(voice_find(obj, ev, HEAR.gen)); _VOICE_BG.add(task); task.add_done_callback(_VOICE_BG.discard)
+    return f"looking for {obj or 'it'}", True
+
+async def voice_find(obj, ev, gen):
+    """Not the voice task: looking doesn't stop anything. The answer is a nod or a shake, unless STOP came first."""
+    b = await voice_sight(obj)
+    if gen != HEAR.gen: return
+    if b: await voice_note(ev, f"found {b['name']} {b['conf']:.2f} at ({b['x']:.0f}, {b['y']:.0f})", True); await voice_react("nod")
+    else: await voice_note(ev, f"no {obj or 'object'} in sight", False); await voice_react("shake")
+
+async def v_seq(cmd, say, arg, ev):
+    if cmd == "handover": return ("bringing it over", True) if start_seq(handover_seq(), "a hand-over") else ("busy", False)
+    if V is None: return "refused: putting it down needs the camera (the table height)", False
+    if cmd == "put_back" and not S.held: return "nothing to put back", False
+    back = cmd == "put_back"
+    ok = start_seq(place_seq(back), "putting it back" if back else "putting it down")
+    return ("putting it back" if back else "putting it down", True) if ok else ("busy", False)
+
+async def v_speed(cmd, say, arg, ev):
+    v = {"full_speed": SPEEDS[-1], "normal_speed": 60.0}.get(cmd)
+    if v is None and cmd == "faster": v = next((s for s in SPEEDS if s > S.speed + 0.5), SPEEDS[-1])
+    if v is None: v = next((s for s in reversed(SPEEDS) if s < S.speed - 0.5), SPEEDS[0])
+    await handle(VOICE, {"type": "speed", "dps": v})
+    return f"speed {v:.0f}", True
+
+async def v_camera(cmd, say, arg, ev):
+    if V is None: return "refused: no camera", False
+    if cmd == "detect_off": await handle(VOICE, {"type": "detect", "on": False}); return "Detect off", True
+    preset = {"hover_low": "low", "hover_high": "high", "hover_normal": "hover"}[cmd]
+    await handle(VOICE, {"type": "follow_z", "preset": preset})
+    return f"follow height {preset} ({follow_hover():.0f} mm)", True
+
+async def v_question(cmd, say, arg, ev):
+    """The read-only ones: they answer in the Heard list, with a nod or a shake where it's a yes or a no."""
+    if cmd == "where":
+        t = tool_state()
+        return (f"tool at ({t['x']:.0f}, {t['y']:.0f}, {t['z']:.0f}) mm, pitch {t['pitch']:.0f}\u00b0, roll {t['roll']:.0f}"
+                f" \u00b7 Live {'on' if S.live else 'off'} \u00b7 speed {S.speed:.0f} \u00b7 follow {'on' if S.follow else 'off'}"
+                + (f" \u00b7 holding {S.held['name'] or 'something'}" if S.held else "")), True
+    if cmd == "help": return "every command is on Voice > Commands", True
+    if V is None: return "no camera", False
+    if cmd == "pose_ok":
+        ok, why = V.pose_health(); await voice_react("nod" if ok else "shake")
+        return ("the camera pose is OK" if ok else f"the camera pose is not OK: {why}"), ok
+    names = [f"{d['name']} {d['conf']:.2f}" for d in V.dets[:5]] if V.detect_on else []
+    await voice_react("nod" if names else "shake")
+    return ("sees " + ", ".join(names)) if names else "Detect is off" if not V.detect_on else "nothing detected", bool(names)
+
+async def v_voice(cmd, say, arg, ev):
+    if cmd == "listen_off": await voice_msg("voice_set", {"key": "mode", "value": "off"}); return "voice off (the Voice tab turns it on again)", True
+    HEAR.set("sounds", cmd == "unmute")
+    return ("sounds on" if cmd == "unmute" else "sounds off"), True
+
+# command -> (handler, flags). c: cancels the voice task (a gesture hands back its start pose first),
+# p: cancels a running pick or hand-over, L: needs Live, F: ends follow, q: read-only (answers in dry
+# run), s: a step (opens the no-name window, "again" repeats it, "undo" takes it back)
+VOICE_DO = {"follow": (v_follow, "c"), "home": (v_pose_cmd, "cpLF"), "rest": (v_pose_cmd, "cpLF"),
+            "wake": (v_pose_cmd, "cpLF"), "relax": (v_pose_cmd, "cpLF"),
+            **{c: (v_step, "cpLs") for c in TOWARD},
+            "turn_left": (v_turn, "cpLFs"), "turn_right": (v_turn, "cpLFs"),
+            "tilt_up": (v_tilt, "cpLFs"), "tilt_down": (v_tilt, "cpLFs"), "point_down": (v_tilt, "cpLF"),
+            "roll_left": (v_roll, "cpLs"), "roll_right": (v_roll, "cpLs"), "roll_center": (v_roll, "cpL"),
+            "open": (v_grip, "cpLs"), "close": (v_grip, "cpLs"), "undo": (v_undo, "cpLF"), "again": (v_again, ""),
+            "pick": (v_pick, "cpLF"), "bring": (v_pick, "cpLF"), "handover": (v_seq, "cpLF"),
+            "put_down": (v_seq, "cpLF"), "put_back": (v_seq, "cpLF"),
+            "slower": (v_speed, ""), "faster": (v_speed, ""), "full_speed": (v_speed, ""), "normal_speed": (v_speed, ""),
+            "hover_low": (v_camera, ""), "hover_high": (v_camera, ""), "hover_normal": (v_camera, ""),
+            "detect_off": (v_camera, ""), "find": (v_find, ""),
+            "pose_ok": (v_question, "q"), "what_see": (v_question, "q"), "where": (v_question, "q"), "help": (v_question, "q"),
+            "listen_off": (v_voice, "q"), "mute": (v_voice, "q"), "unmute": (v_voice, "q")}
+
+async def voice_act(cmd, say, arg=None, ev=None):
+    """Do a spoken command. Returns (what happened, ok). ev, when given, is the Heard entry a command
+    that finishes later updates."""
     if cmd == "stop":       # stop never moves anything: it works in dry run and with no page open too
         voice_cancel(); await handle(VOICE, {"type": "stop"}); return "stopped", True
-    if HEAR.s["dry_run"]: return "dry run, not acted on", True
+    if cmd in ("confirm", "cancel"): return voice_answer(cmd == "confirm")
+    if S.voice_ask: voice_answer(False)          # anything else said while a pick waits for yes is a no
+    fn, flags = VOICE_DO.get(cmd, (None, ""))
+    if HEAR.s["dry_run"] and "q" not in flags: return "dry run, not acted on", True
     if not S.clients: return "refused: no page is open", False
     # a reaction cancels what is running only if it will really move, and never a relax fold
-    if cmd in GESTURE_FOR: return await voice_gesture(GESTURE_FOR[cmd], spoken=True)
-    voice_cancel()
-    if cmd == "follow":
-        if S.follow: return "already following", True
-        why = follow_on()
-        return ("following your finger", True) if S.follow else (f"refused: {why}", False)
+    if cmd in GESTURE_FOR or cmd == "trick":
+        return await voice_gesture(GESTURE_FOR.get(cmd) or random.choice(("nod", "shake", "wave", "bow", "dance")), spoken=True)
+    if fn is None: return f"unknown command {cmd!r}", False
     # refused rather than queued: with Live off the target would wait, and the arm would jump when Live goes on
-    if not S.live: return "refused: Live is off", False
-    if S.pick_task and not S.pick_task.done(): S.pick_task.cancel()
-    follow_off(f'you said "{say}"', "info")
-    if cmd == "home":
-        await handle(VOICE, {"type": "home"}); return "going to the start pose", True
-    if cmd == "relax":
-        S.voice_task = asyncio.create_task(voice_relax()); return "folding to rest, then relaxing", True
-    return f"unknown command {cmd!r}", False
+    if "L" in flags and not S.live: return "refused: Live is off", False
+    if "c" in flags:
+        home = list(S.gesture_home) if S.gesture and S.gesture_home else None
+        voice_cancel()
+        if home: S.tgt[:5] = home[:5]            # a gesture cut short: what comes next starts where it began
+    if "p" in flags and S.pick_task and not S.pick_task.done():
+        S.pick_task.cancel(); await asyncio.wait([S.pick_task], timeout=2.0)
+    if "F" in flags: follow_off(f'you said "{say}"', "info")
+    r = await fn(cmd, say, arg, ev)
+    if r[1] and "s" in flags: S.voice_again = (cmd, arg)
+    return r
 
 async def voice_relax():
     """'Dummy, relax': fold to the rest pose and only then go limp, so the arm never drops from mid-air.
@@ -1250,25 +1513,33 @@ async def voice_event(ev):
         if ev["cmd"] != "stop" and ev.get("gen") != HEAR.gen:   # STOP or a voice change since it was transcribed
             ev["result"], ev["ok"] = "dropped: STOP or a voice change came first", False
         else:
-            ev["result"], ev["ok"] = await voice_act(ev["cmd"], ev["say"])
+            ev["result"], ev["ok"] = await voice_act(ev["cmd"], ev["say"], ev.get("arg"), ev)
             # a reaction makes its own sound whether or not the arm could move with it
-            snd = {"yes": "ok", "no": "nope", "praise": "happy"}.get(ev["cmd"]) if HEAR.s["personality"] else None
+            snd = REACTION_SOUND.get(ev["cmd"]) if HEAR.s["personality"] else None
             HEAR.sound(snd or ("ok" if ev["ok"] else "no"))
+            if ev["ok"] and (ev["cmd"] in STEPS or ev["cmd"] == "again") and not HEAR.s["dry_run"]:
+                HEAR.keep_awake(HEAR.s["awake_window"], AFTER_STEP)    # "up ... up ... left" without the name each time
         log(f'Voice: "{ev.get("text", "")}" -> {ev["say"]}: {ev["result"]}', "ok" if ev["ok"] else "warn")
-    elif ev.get("kind") == "wake" and ev.get("source") == "vad" and HEAR.s["personality"] and ev.get("gen") == HEAR.gen \
-            and not (S.voice_task and not S.voice_task.done()):
-        # A bare "Dummy" gets a nod (Hearing already chimed). Never over a relax fold or another gesture.
-        ev["result"], ev["ok"] = ("dry run: would nod", True) if HEAR.s["dry_run"] \
-            else ("no page is open", False) if not S.clients else await voice_gesture("nod")
+    elif ev.get("kind") in ("wake", "unknown") and HEAR.s["personality"] and ev.get("gen") == HEAR.gen \
+            and not (S.voice_task and not S.voice_task.done()) \
+            and (ev.get("source") == "vad" if ev.get("kind") == "wake" else (ev.get("wake") or ev.get("source") == "ptt") and ev.get("words", 9) <= 4):
+        # A bare "Dummy" gets a nod (Hearing already chimed); a short phrase after it that isn't a
+        # command, a puzzled head tilt. Never over a relax fold or another gesture.
+        g = "nod" if ev["kind"] == "wake" else "huh"
+        ev["result"], ev["ok"] = (f"dry run: would {gestures.VERB[g]}", True) if HEAR.s["dry_run"] \
+            else ("no page is open", False) if not S.clients else await voice_gesture(g)
     VOICEQ.append(ev)
     await broadcast({"type": "voice_heard", "ev": ev})
 
-# ---------------- personality: nod, shake, happy dance ----------------
+# ---------------- personality: nod, shake, dance, wave, bow, huh, sad ----------------
 # gestures.py has the choreography; here it meets the arm. A gesture is small, planned from wherever
 # the arm is, checked against the joint limits and the table before it moves, and comes back to where
 # it started. It runs as S.voice_task, so STOP, manual control, another spoken command, follow
 # switching on and voice going off all cancel it, like a spoken relax.
-GESTURE_FOR = {"yes": "nod", "no": "shake", "praise": "dance"}   # spoken reaction -> gesture
+GESTURE_FOR = {"yes": "nod", "no": "shake", "praise": "dance", "dance": "dance", "hello": "wave",   # spoken reaction -> gesture
+               "thanks": "bow", "scold": "sad"}                                                       # ("trick": any of them)
+REACTION_SOUND = {"yes": "ok", "no": "nope", "praise": "happy", "dance": "happy", "hello": "hello", "thanks": "bow",
+                  "scold": "sad", "trick": "happy"}
 
 def gesture_check():
     """Why no gesture can move the arm now, or ''."""
@@ -1294,7 +1565,8 @@ async def voice_gesture(name, spoken=False):
     def no(text): S.gesture_last = text; return text, False
     why = gesture_check()
     if why: return no(f"didn't {verb}: {why}")
-    if spoken and S.voice_task and not S.voice_task.done() and not S.gesture: return no(f"didn't {verb}: busy relaxing")
+    if spoken and S.voice_task and not S.voice_task.done() and not S.gesture and S.voice_task is not asyncio.current_task():
+        return no(f"didn't {verb}: busy relaxing")
     # Planned from the target, so the arm must be there: the rest of an unfinished move would run at
     # gesture speed along a path nobody checked. Mid-gesture is fine: it hands over its start pose.
     if not S.gesture and max(abs(S.tgt[i] - S.cur[i]) for i in range(5)) > 1.0: return no(f"didn't {verb}: the arm is still moving")
@@ -1302,7 +1574,7 @@ async def voice_gesture(name, spoken=False):
     (steps, scale, why), size = plan_gesture(name, home)
     if steps is None: return no(f"no room to {verb} here ({why})")
     voice_cancel()
-    S.gesture_speed = HEAR.s["gesture_speed"] if HEAR is not None else 120.0
+    S.gesture_speed = (HEAR.s["gesture_speed"] if HEAR is not None else 120.0) * gestures.TEMPO.get(name, 1.0)
     # Wake what this gesture moves of roll and gripper (they hold nothing up, and a start pose after a
     # relax never moves them), nothing else; the 360 gripper braked first, so it can't wake up driving.
     used = {i for _, t in steps for i in (4,) if abs(t[i] - home[i]) > 1e-6} | ({5} if steps[0][1][5] is not None else set())

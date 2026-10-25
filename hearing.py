@@ -21,22 +21,143 @@ SR = 16000
 FRAME = 512                  # Silero VAD's frame at 16 kHz: 32 ms
 FRAME_S = FRAME / SR
 
-# Command id -> what may follow the wake word. Matching is fuzzy and ignores FILLER words.
+# Command id -> what may follow the wake word. Matching ignores FILLER words; an exact phrase wins
+# outright, anything else is fuzzy. test_voice.py checks that no two commands' phrases come close.
 COMMANDS = {
     "follow": ("come here", "come over here", "come", "follow me", "follow my finger", "follow finger", "follow"),
     "home": ("start pose", "start position", "starting pose", "starting position", "go to start", "start", "go home", "home"),
-    "relax": ("relax", "relax all", "go limp", "go to sleep", "sleep"),
-    "stop": ("stop", "halt", "freeze", "stop following", "stay", "hold it"),
+    "relax": ("relax", "relax all", "go limp", "go to sleep", "sleep", "good night", "night night", "nap time"),
+    "stop": ("stop", "stop it", "halt", "freeze", "stop following", "stay", "hold it"),
+    # moves: one bounded step each, an amount optional ("up a bit", "left 3 cm", "roll right 45")
+    "up": ("up", "go up", "move up", "higher", "raise", "lift"),
+    "down": ("down", "go down", "move down", "lower"),
+    "left": ("left", "go left", "move left", "to the left"),
+    "right": ("right", "go right", "move right", "to the right"),
+    "toward": ("toward me", "towards me", "come closer", "this way"),
+    "away": ("away", "away from me", "further away", "go away"),
+    "turn_left": ("turn left", "rotate left", "swing left"),
+    "turn_right": ("turn right", "rotate right", "swing right"),
+    "tilt_up": ("tilt up", "look up", "head up"),
+    "tilt_down": ("tilt down", "look down", "head down"),
+    "point_down": ("point down", "straight down", "face down"),
+    "roll_left": ("roll left", "twist left", "wrist left"),
+    "roll_right": ("roll right", "twist right", "wrist right"),
+    "roll_center": ("straighten", "straighten the wrist", "roll centre", "roll center"),
+    "open": ("open", "open up", "open the gripper", "open gripper", "open your hand", "let go", "let it go", "release", "drop it"),
+    "close": ("close", "close the gripper", "close gripper", "close your hand", "grip", "squeeze", "clamp"),
+    "rest": ("rest pose", "rest position", "fold up", "tuck in"),
+    "wake": ("wake up", "get up", "stand up"),
+    "undo": ("undo", "go back", "back", "undo that"),
+    "again": ("again", "repeat", "once more", "one more time", "more", "do it again"),
+    # pick and hand-over: "pick up the pen" / "bring me the pen" / "find the pen" are SLOTS, below
+    "pick": ("pick it up", "pick that up", "pick up", "grab it"),
+    "bring": ("bring me that", "bring me this"),
+    "find": ("find it",),
+    "handover": ("bring it to me", "bring it here", "bring it over", "hand it over", "give it to me", "give it here"),
+    "put_down": ("put it down", "put down", "set it down", "place it"),
+    "put_back": ("put it back", "put back"),
+    # speed, follow, camera, questions
+    "slower": ("slow down", "slow it down", "careful", "be careful", "gently"),
+    "faster": ("faster", "speed up", "go faster", "quicker", "hurry up"),
+    "full_speed": ("full speed", "top speed", "max speed"),
+    "normal_speed": ("normal speed", "regular speed"),
+    "hover_low": ("hover low",),
+    "hover_high": ("hover high",),
+    "hover_normal": ("hover normal", "normal height"),
+    "detect_off": ("stop looking", "detect off", "stop searching"),
+    "pose_ok": ("is the pose ok", "is the pose good", "are the markers ok", "check the camera", "can you see the table"),
+    "what_see": ("what do you see", "what can you see", "what's there"),
+    "where": ("where are you", "status", "report"),
+    # voice itself
+    "confirm": ("yes", "yeah", "yep", "yes please", "do it", "go ahead", "confirm"),
+    "cancel": ("no", "nope", "cancel", "never mind", "no thanks"),
+    "help": ("what can i say", "help", "commands", "what can you do"),
+    "listen_off": ("stop listening", "voice off", "ignore me"),
+    "mute": ("be quiet", "quiet", "shush", "shut up", "mute"),
+    "unmute": ("sounds on", "unmute", "you can beep"),
     # personality (gestures.py): a question he answers yes with a nod, one he answers no to, praise
-    "yes": ("are you awake", "are you there", "are you listening", "are you ready", "can you hear me"),
+    "yes": ("are you awake", "are you there", "are you listening", "are you ready", "can you hear me",
+            "are you happy", "do you like me", "are we friends", "how are you"),
     "no": ("are you dumb", "are you stupid", "are you an idiot", "are you broken", "are you useless",
            "are you a bad robot", "you're dumb", "you are dumb", "you're stupid", "you are stupid",
            "you dumb", "you stupid", "you idiot"),
     "praise": ("good boy", "who's a good boy", "good job", "well done", "good robot"),
+    "dance": ("dance", "let's dance", "party", "do a dance"),
+    "hello": ("hello", "hi", "say hi", "say hello", "good morning", "wave", "bye", "bye bye", "goodbye",
+              "see you", "see you later", "see ya"),
+    "thanks": ("thank you", "thanks", "thanks a lot", "take a bow", "bow"),
+    "scold": ("bad boy", "bad robot", "naughty", "shame on you"),
+    "trick": ("do a trick", "show off", "surprise me"),
 }
-SAY = {"follow": "come here", "home": "start pose", "relax": "relax", "stop": "stop",   # what the Voice tab shows
-       "yes": "a yes question", "no": "a no question", "praise": "good boy"}
-REACTIONS = ("yes", "no", "praise")     # commands that are body language, not tasks
+# What the Voice tab shows for each (and what the Commands page lists it as)
+SAY = {"follow": "come here", "home": "start pose", "relax": "relax", "stop": "stop",
+       "up": "up", "down": "down", "left": "left", "right": "right", "toward": "toward me", "away": "away",
+       "turn_left": "turn left", "turn_right": "turn right", "tilt_up": "tilt up", "tilt_down": "tilt down",
+       "point_down": "point down", "roll_left": "roll left", "roll_right": "roll right", "roll_center": "straighten",
+       "open": "open", "close": "close", "rest": "rest pose", "wake": "wake up", "undo": "undo", "again": "again",
+       "pick": "pick up the pen", "bring": "bring me the pen", "find": "find the pen", "handover": "bring it to me",
+       "put_down": "put it down", "put_back": "put it back",
+       "slower": "slow down", "faster": "faster", "full_speed": "full speed", "normal_speed": "normal speed",
+       "hover_low": "hover low", "hover_high": "hover high", "hover_normal": "normal height",
+       "detect_off": "stop looking", "pose_ok": "is the pose OK?", "what_see": "what do you see?", "where": "where are you?",
+       "confirm": "yes", "cancel": "no", "help": "what can I say?", "listen_off": "stop listening",
+       "mute": "be quiet", "unmute": "sounds on",
+       "yes": "a yes question", "no": "a no question", "praise": "good boy", "dance": "dance", "hello": "hello",
+       "thanks": "thank you", "scold": "bad boy", "trick": "do a trick"}
+# One line of what each does, for the Commands page. "huh" is no command: what an unknown phrase gets.
+HELP = {"follow": "finger follow on", "home": "the start pose", "relax": "park on the desk, then go limp",
+        "stop": "STOP: holds where it is, gripper braked",
+        "up": "20 mm up (a bit 10, a lot 50). While following: the hover height", "down": "20 mm down, the same",
+        "left": "20 mm to your left", "right": "20 mm to your right", "toward": "20 mm toward you", "away": "20 mm away from you",
+        "turn_left": "the base 15° to your left", "turn_right": "the base 15° to your right",
+        "tilt_up": "the tool 15° up, tip in place", "tilt_down": "the tool 15° down, tip in place",
+        "point_down": "the tool straight down", "roll_left": "the wrist 30°, top to your left",
+        "roll_right": "the wrist 30°, top to your right", "roll_center": "the wrist back to roll zero",
+        "open": "the gripper opens for 1 s (a bit 0.4, a lot 2.5), then brakes",
+        "close": "the gripper closes for 1.5 s, then brakes", "rest": "park on the desk, staying engaged",
+        "wake": "wake every servo, then the start pose", "undo": "back to before the last spoken move",
+        "again": "the last step once more",
+        "pick": "find it and pick it up; with Confirm picks on, it hovers over it and waits for yes",
+        "bring": "pick it up, then bring it over to you", "find": "look for it: a nod if it's there, a shake if not",
+        "handover": "carry what it holds over to you, then wait for let go",
+        "put_down": "put it down on the table right here", "put_back": "put it back where it was picked",
+        "slower": "one speed step slower", "faster": "one speed step faster", "full_speed": "speed 180",
+        "normal_speed": "speed 60", "hover_low": "follow height Low", "hover_high": "follow height High",
+        "hover_normal": "follow height Hover", "detect_off": "Detect off",
+        "pose_ok": "a nod if the camera pose is good, a shake (and why) if not",
+        "what_see": "what Detect sees, with a nod or a shake", "where": "where the tool is, Live, speed and follow",
+        "confirm": "answers a pick waiting for yes", "cancel": "says no to it", "help": "opens this page",
+        "listen_off": "voice off", "mute": "no more beeps", "unmute": "beeps again",
+        "yes": "a nod (are you awake, ready, happy, there...)", "no": "a head shake (are you dumb, stupid, broken...)",
+        "praise": "the happy dance (good job, well done, good robot)", "dance": "the dance, on request",
+        "hello": "a wave (hi, bye, good morning, see you)", "thanks": "a bow", "scold": "a sad droop",
+        "trick": "a random one", "huh": "a puzzled head tilt"}
+GROUPS = (("Basics", ("follow", "home", "relax", "stop")),
+          ("Moves", ("up", "down", "left", "right", "toward", "away", "turn_left", "turn_right", "tilt_up", "tilt_down",
+                     "point_down", "roll_left", "roll_right", "roll_center", "open", "close", "rest", "wake", "undo", "again")),
+          ("Pick and hand-over", ("pick", "bring", "handover", "put_down", "put_back")),
+          ("Speed, follow, camera", ("slower", "faster", "full_speed", "normal_speed", "hover_low", "hover_high",
+                                     "hover_normal", "find", "detect_off", "pose_ok", "what_see", "where")),
+          ("Voice", ("confirm", "cancel", "help", "listen_off", "mute", "unmute")),
+          ("Personality", ("yes", "no", "praise", "dance", "hello", "thanks", "scold", "trick", "huh")))
+REACTIONS = ("yes", "no", "praise", "dance", "hello", "thanks", "scold", "trick")   # body language, not tasks
+# Phrases that read like one command but usually mean another: they never act, the Heard list says why
+AMBIGUOUS = {"slower": 'too close to "lower": say "slow down"', "closer": 'too close to "close": say "toward me"'}
+# The object slots: verb, then up to 3 words of object ("pick up the red pen", "do you see my scissors")
+SLOTS = (("pick", ("pick up", "pick", "grab", "fetch", "get")),
+         ("bring", ("bring me", "give me", "hand me", "get me", "bring")),
+         ("find", ("find", "look for", "search for", "where is", "where's", "do see", "see")))
+THIS = frozenset(("it", "that", "this", "one", "that one", "this one", "them"))   # = what Detect sees now
+# Commands that take an amount, and the words for one
+AMOUNT_CMDS = frozenset(("up", "down", "left", "right", "toward", "away", "turn_left", "turn_right", "tilt_up",
+                         "tilt_down", "roll_left", "roll_right", "open", "close"))
+SMALL, BIG = frozenset("bit little slightly tiny touch smidge".split()), frozenset("lot lots much".split())
+UNITS = {"mm": "mm", "millimeter": "mm", "millimeters": "mm", "millimetre": "mm", "millimetres": "mm",
+         "cm": "cm", "centimeter": "cm", "centimeters": "cm", "centimetre": "cm", "centimetres": "cm",
+         "degree": "deg", "degrees": "deg", "deg": "deg"}
+ONES = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                   "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+TENS = {w: 10 * (i + 2) for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())}
 NEGATIONS = frozenset(("not", "never"))
 FILLER = frozenset("please now uh um er hey ok okay so the to go and a an your you can could would just".split())
 MODELS = ("small.en", "medium.en", "large-v3-turbo")
@@ -63,7 +184,8 @@ DEFAULTS = {
     "gesture_size": 1.0,     # gesture amplitude, x the choreography
     "gesture_speed": 120.0,  # deg/s while gesturing, whatever the speed slider says
     "dance_clap": True,      # the gripper claps in the dance
-    "reactions": {},         # your own extra phrases: {"yes" / "no" / "praise": [...]}
+    "reactions": {},         # your own extra phrases: {"yes" / "no" / "praise" / "hello" / ...: [...]}
+    "pick_confirm": True,    # a spoken pick hovers over what it found and waits for "yes"
 }
 
 
@@ -90,15 +212,64 @@ def spellings(wake):
     return out
 
 
+def _number(words, i):
+    """(value, words used) for a number starting at words[i]: digits ("30", "3cm") or words
+    ("thirty five", "a hundred" once the filler is gone), else (None, 0)."""
+    w = words[i]
+    m = re.fullmatch(r"(\d+)(mm|cm)?", w)
+    if m: return float(m.group(1)), 1
+    if w == "hundred": return 100.0, 1
+    if w in TENS:
+        if i + 1 < len(words) and words[i + 1] in ONES and ONES[words[i + 1]] < 10: return float(TENS[w] + ONES[words[i + 1]]), 2
+        return float(TENS[w]), 1
+    if w in ONES: return float(ONES[w]), 1
+    return None, 0
+
+
+def parse_amount(words):
+    """Filler-free words -> (the words without their amount, amount or None). The amount is
+    {"n": number or None, "unit": "mm" / "cm" / "deg" or None, "size": "small" / "big" or None}:
+    "up 3 cm" -> (['up'], n 3 cm); "up a little bit" -> (['up'], small)."""
+    out, n, unit, size, i = [], None, None, None, 0
+    while i < len(words):
+        w = words[i]
+        v, used = (None, 0) if n is not None else _number(words, i)
+        if used:
+            n = v; i += used
+            g = re.fullmatch(r"\d+(mm|cm)", w)
+            if g: unit = g.group(1)
+            elif i < len(words) and words[i] in UNITS: unit = UNITS[words[i]]; i += 1
+            continue
+        if w in SMALL: size = "small"
+        elif w in BIG: size = "big"
+        else: out.append(w)
+        i += 1
+    return (out, {"n": n, "unit": unit, "size": size}) if n is not None or size else (words, None)
+
+
 class Matcher:
     """Transcript -> command. Pure, so the whole policy is tested offline from text."""
 
     def __init__(self, wake="dummy", wake_aliases=(), phrase_aliases=None):
         self.wake = " ".join(normalize(wake)) or "dummy"
         self.wakes = [normalize(w) for w in spellings(self.wake) + list(wake_aliases) if normalize(w)]
-        self.phrases = {c: [" ".join(_core(normalize(p))) for p in ps] for c, ps in COMMANDS.items()}
-        for c, ps in (phrase_aliases or {}).items():
-            if c in self.phrases: self.phrases[c] += [" ".join(_core(normalize(p))) for p in ps if _core(normalize(p))]
+        extra = {c: [p for p in ps if _core(normalize(p))] for c, ps in (phrase_aliases or {}).items() if c in COMMANDS}
+        table = {c: list(ps) + extra.get(c, []) for c, ps in COMMANDS.items()}
+        table.update({"?" + p: [p] for p in AMBIGUOUS})          # near-misses compete, and never act
+        core = {c: [" ".join(_core(normalize(p))) for p in ps] for c, ps in table.items()}
+        # A phrase whose filler-free form reads like another command counts only as said: "let go"
+        # without its filler is "let", too close to "left" to fuzzy-match or to match bare
+        def as_said(c, p):
+            k = " ".join(_core(normalize(p)))
+            return k != " ".join(normalize(p)) and any(sim(k, o) >= CMD_SIM for d, ks in core.items() if d != c for o in ks)
+        self.phrases = {c: [" ".join(_core(normalize(p))) for p in ps if not as_said(c, p)] for c, ps in table.items()}
+        # exact: the words as said, or without the filler; an exact phrase is never a near miss
+        self.exact = {}
+        for c, ps in table.items():
+            for p in ps:
+                self.exact.setdefault(" ".join(normalize(p)), c)
+                if not as_said(c, p): self.exact.setdefault(" ".join(_core(normalize(p))), c)
+        self.slots = sorted(((c, v.split()) for c, vs in SLOTS for v in vs), key=lambda cv: -len(cv[1]))
 
     def find_wake(self, words):
         """Index just past the wake word if it is among the first WAKE_WITHIN words, else None."""
@@ -112,14 +283,47 @@ class Matcher:
         phrase itself lacks rules it out: "you're not dumb" is no insult, "don't relax" no command."""
         cw = _core(words); core = " ".join(cw); neg = _negated(cw)
         def score(p): return 0.0 if neg and not _negated(p.split()) else 1.0 if core == p else sim(core, p)
-        return {c: max(score(p) for p in ps) for c, ps in self.phrases.items()} if core else {}
+        return {c: max(score(p) for p in ps) for c, ps in self.phrases.items() if ps} if core else {}
 
-    def match_command(self, words):
-        """(command or None, best score, margin over the runner-up command)."""
+    def _fuzzy(self, words):
         sc = sorted(self.scores(words).items(), key=lambda kv: -kv[1])
         if not sc: return None, 0.0, 0.0
         best, margin = sc[0][1], sc[0][1] - (sc[1][1] if len(sc) > 1 else 0.0)
         return (sc[0][0] if best >= CMD_SIM and margin >= CMD_MARGIN else None), best, margin
+
+    def _slot(self, cw):
+        """(command, object or None) for "pick up the pen" / "bring me it" / "do you see my scissors", else None."""
+        for c, v in self.slots:
+            if cw[:len(v)] != v: continue
+            obj = cw[len(v):]
+            if obj and obj[-1] == "up": obj = obj[:-1]                      # "pick the pen up"
+            obj = [w for w in obj if w not in ("me", "my", "some")]
+            if not obj or len(obj) > 3: return None
+            return c, None if " ".join(obj) in THIS else " ".join(obj)
+        return None
+
+    def parse(self, words):
+        """The words after the wake word -> (command or None, score, margin, arg, hint). In order: an
+        exact phrase; an object slot; a command with an amount; the fuzzy match. arg is an amount
+        (parse_amount) or {"obj": name or None}; hint says why a near miss didn't act."""
+        cw = _core(words)
+        if not cw: return None, 0.0, 0.0, None, ""
+        hit = self.exact.get(" ".join(words)) or self.exact.get(" ".join(cw))
+        if hit is None and not _negated(cw):
+            s = self._slot(cw)
+            if s: return s[0], 1.0, 1.0, {"obj": s[1]}, ""
+            rest, amount = parse_amount(cw)
+            if amount and rest:
+                c = self.exact.get(" ".join(rest))
+                c, score, margin = (c, 1.0, 1.0) if c else self._fuzzy(rest)
+                if c in AMOUNT_CMDS: return c, score, margin, amount, ""
+        cmd, score, margin = (hit, 1.0, 1.0) if hit else self._fuzzy(words)
+        if cmd and cmd.startswith("?"): return None, score, margin, None, AMBIGUOUS[cmd[1:]]
+        return cmd, score, margin, ({"obj": None} if cmd in ("pick", "bring", "find") else None), ""
+
+    def match_command(self, words):
+        """(command or None, best score, margin over the runner-up command)."""
+        return self.parse(words)[:3]
 
     def match(self, text, need_wake=True):
         """What a transcript means. kind is one of:
@@ -134,9 +338,12 @@ class Matcher:
         if i is None and need_wake: return {"kind": "nowake"}
         rest = words[i:] if i is not None else words
         if i is not None and not _core(rest): return {"kind": "wake", "wake": True}
-        cmd, score, margin = self.match_command(rest)
-        return {"kind": "command" if cmd else "unknown", "cmd": cmd, "score": round(score, 2),
-                "margin": round(margin, 2), "wake": i is not None, "words": len(_core(rest))}
+        cmd, score, margin, arg, hint = self.parse(rest)
+        r = {"kind": "command" if cmd else "unknown", "cmd": cmd, "score": round(score, 2),
+             "margin": round(margin, 2), "wake": i is not None, "words": len(_core(rest))}
+        if arg: r["arg"] = arg
+        if hint: r["hint"] = hint
+        return r
 
 
 @dataclass
@@ -214,6 +421,14 @@ class Segmenter:
         return []
 
 
+def said(r):
+    """What a matched command was, for the Heard list and the log: the object of a pick as said."""
+    forms = {"pick": ("pick up the {}", "pick it up"), "bring": ("bring me the {}", "bring it"), "find": ("find the {}", "find it")}.get(r["cmd"])
+    if not forms: return SAY[r["cmd"]]
+    obj = (r.get("arg") or {}).get("obj")
+    return forms[0].format(obj) if obj else forms[1]
+
+
 def quiet_threshold(probs):
     """(threshold, p99) for a room whose non-speech scored these probabilities: just above the
     loudest 1% of them, never below Silero's default 0.5, never so high that speech gets missed."""
@@ -243,7 +458,7 @@ def learn(text, cmd, m):
     if not core: return False, None, None, "heard only the wake word"
     if len(core.split()) > 4: return False, None, None, "too many words to learn"
     near = [c for c, v in sorted(m.scores(rest).items(), key=lambda kv: -kv[1]) if c != cmd and v >= 0.7]
-    if near: return False, None, None, f'"{core}" is too close to "{SAY[near[0]]}"'
+    if near: return False, None, None, f'"{core}" is too close to "{SAY.get(near[0], near[0].lstrip("?"))}"'
     return True, wake_alias, core, ""
 
 
@@ -470,7 +685,12 @@ SOUNDS = {"wake": [(660, 70), (0, 25), (990, 90)],    # heard the name: say the 
           "ok": [(880, 60), (0, 20), (1320, 80)],     # done
           "no": [(300, 110), (0, 40), (220, 160)],    # heard you, but refused or not understood
           "nope": [(392, 150), (0, 70), (330, 240)],  # "uh-uh", with the head shake
-          "happy": [(523, 90), (0, 20), (659, 90), (0, 20), (784, 90), (0, 20), (1047, 110), (0, 40), (784, 80), (0, 20), (1047, 220)]}
+          "happy": [(523, 90), (0, 20), (659, 90), (0, 20), (784, 90), (0, 20), (1047, 110), (0, 40), (784, 80), (0, 20), (1047, 220)],
+          "hello": [(587, 90), (0, 30), (880, 160)],                       # "hi-i", with the wave
+          "bow": [(784, 120), (0, 30), (659, 120), (0, 30), (523, 260)],    # a little curtsey down the scale
+          "sad": [(440, 220), (0, 40), (392, 220), (0, 40), (311, 420)],    # the droop
+          "huh": [(330, 90), (0, 20), (494, 180)],                         # a puzzled "hm?", with the head tilt
+          "ask": [(523, 80), (0, 30), (659, 80), (0, 30), (880, 140)]}      # say yes or no
 
 
 class Sounds:
@@ -514,6 +734,7 @@ class Hearing:
         self.level, self.speech, self.noise_db, self.speech_db = -90.0, False, self.s.get("noise_db"), None
         self.state_note, self.error, self.device, self.asr_ms = "", "", "", None
         self.thinking = False; self.awake_until = self.mute_until = 0.0; self.ptt_on = False
+        self.awake_only = None       # the commands the no-name window takes (None: any, after a bare name)
         self.mics, self.clips, self.n = list_mics(), OrderedDict(), 0
         self.ok, self.why = self.available()
         self.train = None; self.train_last = None; self.train_summary = None
@@ -555,7 +776,7 @@ class Hearing:
         elif key in ("gesture_size", "gesture_speed"):
             lo, hi = {"gesture_size": (0.5, 1.5), "gesture_speed": (60.0, 180.0)}[key]
             s[key] = round(max(lo, min(hi, float(value))), 2)
-        elif key in ("dry_run", "sounds", "personality", "dance_clap"): s[key] = bool(value)
+        elif key in ("dry_run", "sounds", "personality", "dance_clap", "pick_confirm"): s[key] = bool(value)
         elif key == "forget":       # a learned alias: ["wake", text] or [command, text]
             kind, text = value
             if kind == "wake": s["wake_aliases"] = [a for a in s["wake_aliases"] if a != text]
@@ -589,7 +810,12 @@ class Hearing:
     def cancel_pending(self):
         """Nothing heard so far may act: STOP, a mode change, or a calibration starting or ending. Speech
         being collected is dropped, and anything queued or being transcribed is ignored when it comes out."""
-        self.gen += 1; self._seg_reset = True; self.awake_until = 0.0
+        self.gen += 1; self._seg_reset = True; self.awake_until = 0.0; self.awake_only = None
+
+    def keep_awake(self, seconds, only=None):
+        """Open the no-name window for `seconds` (0 closes it): after a step, so "up ... up ... left"
+        needs the name once, or while a pick waits for yes. `only` is the set of commands it takes."""
+        self.awake_only = frozenset(only) if only else None; self.awake_until = time.time() + seconds if seconds > 0 else 0.0
 
     def ptt(self, on):
         """Push to talk, held (True) or released (False). Works in both modes; never needs the name."""
@@ -695,13 +921,17 @@ class Hearing:
         awake = u.source == "vad" and u.t_end - len(u.audio) / SR < self.awake_until
         r = self.matcher.match(text, need_wake=u.source == "vad" and not awake)
         if nsp > NO_SPEECH and r["kind"] == "empty": r = {"kind": "noise"}
+        only = self.awake_only        # a window opened after a step takes only steps without the name
+        if awake and only is not None and u.source == "vad" and not r.get("wake") and r["kind"] in ("command", "unknown") \
+                and r.get("cmd") not in only:
+            r = {"kind": "nowake"}
         ev.update(r)
-        if r.get("cmd"): ev["say"] = SAY[r["cmd"]]
+        if r.get("cmd"): ev["say"] = said(r)
         if r["kind"] == "wake" and u.source == "vad":
-            self.awake_until = time.time() + self.s["awake_window"]; self.sound("wake")
-        elif r["kind"] == "command": self.awake_until = 0.0
+            self.keep_awake(self.s["awake_window"]); self.sound("wake")
+        elif r["kind"] == "command": self.keep_awake(0)        # the server opens it again after a step
         elif r["kind"] == "unknown" and (r.get("wake") or u.source == "ptt") and r["words"] <= 4:
-            self.sound("no")        # a short miss after the name; a long sentence is just talk
+            self.sound("huh" if self.s["personality"] else "no")    # a short miss after the name; a long sentence is just talk
         self.on_event(ev)
 
     # ---------- calibration ----------
@@ -754,8 +984,14 @@ class Hearing:
                 "quiet_result": self.quiet_result,
                 "settings": {k: s[k] for k in ("mic", "model", "wake_word", "vad_threshold", "end_silence", "awake_window",
                                                 "dry_run", "sounds", "wake_aliases", "phrase_aliases", "personality",
-                                                "gesture_size", "gesture_speed", "dance_clap")},
+                                                "gesture_size", "gesture_speed", "dance_clap", "pick_confirm")},
                 "commands": [[c, SAY[c]] for c in Trainer.ORDER + ("praise",)], "models": list(MODELS)}
+
+    @staticmethod
+    def catalog():
+        """The Commands page: [[group, [[id, say, does, [other phrases]], ...]], ...]."""
+        return [[g, [[c, SAY.get(c, c), HELP[c], [p for p in COMMANDS.get(c, ()) if p != SAY.get(c)]] for c in ids]]
+                for g, ids in GROUPS]
 
     def clip_wav(self, i):
         a = self.clips.get(i)

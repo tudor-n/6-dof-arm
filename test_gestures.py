@@ -294,11 +294,44 @@ def test_a_bare_wake_word_nods_but_never_over_a_running_task():
 
 
 def test_spoken_reactions_pick_their_gesture():
-    for cmd, verb in (("yes", "nodded"), ("no", "shook his head"), ("praise", "danced")):
+    for cmd, verb in (("yes", "nodded"), ("no", "shook his head"), ("praise", "danced"), ("dance", "danced"),
+                      ("hello", "waved"), ("thanks", "bowed"), ("scold", "drooped")):
         async def go(cmd=cmd, verb=verb):
             r, ok = await sv.voice_act(cmd, "x"); assert ok and r.startswith(verb), (cmd, r)
             await _done()
         _run(go)
+
+
+def test_a_trick_is_one_of_the_emotes():
+    async def go():
+        r, ok = await sv.voice_act("trick", "do a trick")
+        assert ok and any(r.startswith(G.DONE[g]) for g in ("nod", "shake", "wave", "bow", "dance")), r
+        await _done()
+    _run(go)
+
+
+def test_the_solemn_ones_move_slowly():
+    for name, tempo in (("bow", 0.5), ("sad", 0.35), ("wave", 1.0)):
+        async def go(name=name, tempo=tempo):
+            r, ok = await sv.voice_gesture(name); assert ok, r
+            assert abs(S.gesture_speed - 120.0 * tempo) < 1e-9, (name, S.gesture_speed)
+            await _done()
+        _run(go)
+
+
+def test_a_short_miss_after_the_name_gets_a_head_tilt_and_chatter_doesnt():
+    async def go():
+        ev = {"kind": "unknown", "wake": True, "words": 2, "source": "vad", "gen": 0}
+        await sv.voice_event(ev); assert ev["ok"] and ev["result"] == "tilted his head", ev
+        await _done()
+        for quiet in ({"kind": "unknown", "wake": True, "words": 6, "source": "vad", "gen": 0},     # a sentence: just talk
+                      {"kind": "unknown", "wake": False, "words": 2, "source": "vad", "gen": 0},    # not said to him
+                      {"kind": "unknown", "wake": True, "words": 2, "source": "vad", "gen": 7}):    # from before a STOP
+            await sv.voice_event(quiet); assert "result" not in quiet, quiet
+        sv.HEAR.s["dry_run"] = True
+        ev = {"kind": "unknown", "source": "ptt", "words": 1, "gen": 0}
+        await sv.voice_event(ev); assert ev["result"] == "dry run: would tilt his head", ev
+    _run(go)
 
 
 def test_losing_the_serial_link_ends_a_gesture_for_good():

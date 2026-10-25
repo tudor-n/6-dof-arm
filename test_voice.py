@@ -115,6 +115,104 @@ def test_renamed_wake_word():
     assert kind("Robo, relax", m=m) == "relax" and kind("Dummy, relax", m=m) == "nowake"
 
 
+# --------------------------------------------------------------------------- the whole catalogue
+
+# Phrases of different commands that read within the fuzzy threshold of each other. Each is fine said
+# as it is (an exact phrase wins), and they sound different; a new pair here needs the same thought.
+KNOWN_CLOSE = {frozenset(p) for p in (("lower", "slower"), ("close", "closer"), ("drop it", "do it"),
+               ("are you a bad robot", "bad robot"), ("start position", "rest position"), ("tilt down", "set it down"),
+               ("tilt down", "put it down"), ("open the gripper", "close the gripper"), ("open the gripper", "close gripper"),
+               ("open gripper", "close the gripper"), ("open gripper", "close gripper"), ("no thanks", "thanks"),
+               ("mute", "unmute"), ("good boy", "goodbye"))}
+
+
+def test_every_phrase_is_its_own_command():
+    for c, ps in H.COMMANDS.items():
+        for p in ps:
+            assert kind("Dummy, " + p) == c, f"{p!r} -> {kind('Dummy, ' + p)}, wanted {c}"
+            assert kind(p, need_wake=False) == c, f"push to talk {p!r} -> {kind(p, need_wake=False)}"
+
+
+def test_no_two_commands_sound_alike():
+    import itertools
+    # what the fuzzy match compares: "let go" counts only as said, so its filler-free "let" isn't there
+    items = [(c, p, " ".join(H._core(H.normalize(p)))) for c, ps in H.COMMANDS.items() for p in ps]
+    items = [i for i in items if i[2] in M.phrases[i[0]]] + [("?", p, p) for p in H.AMBIGUOUS]
+    for (c1, p1, k1), (c2, p2, k2) in itertools.combinations(items, 2):
+        if c1 == c2: continue
+        assert k1 != k2, f"{p1!r} ({c1}) and {p2!r} ({c2}) are the same words"
+        if H.sim(k1, k2) >= H.CMD_SIM:
+            assert frozenset((p1, p2)) in KNOWN_CLOSE, f"{p1!r} ({c1}) and {p2!r} ({c2}) are {H.sim(k1, k2):.2f} alike"
+
+
+def test_every_command_has_a_help_line_and_a_group():
+    grouped = {c for _, ids in H.GROUPS for c in ids}
+    assert set(H.COMMANDS) <= grouped and grouped <= set(H.COMMANDS) | {"huh"}, set(H.COMMANDS) ^ grouped
+    assert all(c in H.HELP for c in grouped) and all(c in H.SAY for c in H.COMMANDS)
+    cat = H.Hearing.catalog()
+    assert [g for g, _ in cat] == [g for g, _ in H.GROUPS] and all(len(r) == 4 for _, rows in cat for r in rows)
+
+
+def arg(text, m=M):
+    r = m.match(text); return r.get("cmd"), r.get("arg")
+
+
+def test_amounts():
+    assert arg("Dummy, up") == ("up", None)
+    assert arg("Dummy, up a bit") == ("up", {"n": None, "unit": None, "size": "small"})
+    assert arg("Dummy, move up a little bit") == ("up", {"n": None, "unit": None, "size": "small"})
+    assert arg("Dummy, left a lot") == ("left", {"n": None, "unit": None, "size": "big"})
+    assert arg("Dummy, left 3 cm") == ("left", {"n": 3.0, "unit": "cm", "size": None})
+    assert arg("Dummy, left 3cm.") == ("left", {"n": 3.0, "unit": "cm", "size": None})
+    assert arg("Dummy, up thirty") == ("up", {"n": 30.0, "unit": None, "size": None})
+    assert arg("Dummy, down twenty five millimetres") == ("down", {"n": 25.0, "unit": "mm", "size": None})
+    assert arg("Dummy, roll right 45 degrees") == ("roll_right", {"n": 45.0, "unit": "deg", "size": None})
+    assert arg("Dummy, open a little") == ("open", {"n": None, "unit": None, "size": "small"})
+    assert arg("Dummy, one more time") == ("again", None)                 # an exact phrase, not "one"
+    assert kind("Dummy, five") == "unknown" and kind("Dummy, relax a bit") == "unknown"   # no amount for relax
+
+
+def test_objects():
+    assert arg("Dummy, pick up the red pen") == ("pick", {"obj": "red pen"})
+    assert arg("Dummy, pick the pen up") == ("pick", {"obj": "pen"})
+    assert arg("Dummy, grab it") == ("pick", {"obj": None})
+    assert arg("Dummy, pick it up") == ("pick", {"obj": None})
+    assert arg("Dummy, bring me the scissors") == ("bring", {"obj": "scissors"})
+    assert arg("Dummy, can you get me the cup") == ("bring", {"obj": "cup"})
+    assert arg("Dummy, can you find my scissors") == ("find", {"obj": "scissors"})
+    assert arg("Dummy, where is the tape") == ("find", {"obj": "tape"})
+    assert arg("Dummy, do you see the pen") == ("find", {"obj": "pen"})
+    assert arg("Dummy, bring it to me") == ("handover", None)             # what it holds, not a new pick
+    assert kind("Dummy, can you see the table") == "pose_ok" and kind("Dummy, get up") == "wake"
+    assert kind("Dummy, see you later") == "hello"
+    assert kind("Dummy, don't pick up the pen") == "unknown" and kind("Dummy, pick up the big heavy red pen") == "unknown"
+
+
+def test_near_misses_say_why_and_never_act():
+    for text, hint in (("Dummy, slower", "slow down"), ("Dummy, closer", "toward me")):
+        r = M.match(text)
+        assert r["kind"] == "unknown" and hint in r["hint"], r
+    assert kind("Dummy, lower") == "down" and kind("Dummy, close") == "close" and kind("Dummy, slow down") == "slower"
+    assert kind("Dummy, let go") == "open" and kind("Dummy, let's go") == "unknown"
+
+
+def test_chatter_with_the_name_is_still_not_a_command():
+    for text in ("Dummy, I'm going to lunch", "Dummy is a funny name", "Dummy, what's up", "Dummy, hello there",
+                 "Dummy, that's right", "Dummy, no way", "Dummy, are you ok", "Dummy, sorry", "Dummy, the cup is over there"):
+        assert kind(text) == "unknown", f"{text!r} -> {kind(text)}"
+
+
+def test_the_window_after_a_step_takes_only_steps():
+    h = _hearing(asr_delay=0.0, text="left")
+    h.keep_awake(5.0, {"left", "again", "stop"})
+    h._handle(_utt(h)); assert [e.get("cmd") for e in h.events] == ["left"], h.events
+    h.keep_awake(5.0, {"left", "again", "stop"}); h.events.clear()
+    h._asr = lambda audio, hot: ("relax", 0.01, 0.0)
+    h._handle(_utt(h)); assert [e["kind"] for e in h.events] == ["nowake"], h.events     # needs the name
+    h._asr = lambda audio, hot: ("Dummy, relax", 0.01, 0.0); h.events.clear()
+    h._handle(_utt(h)); assert [e.get("cmd") for e in h.events] == ["relax"], h.events   # with it, anything
+
+
 # --------------------------------------------------------------------------- segmenter
 
 def run(seg, probs, ptt=None):
@@ -197,8 +295,10 @@ def test_learn_learns_a_misheard_phrase():
 
 
 def test_learn_refuses_what_looks_like_another_command():
-    ok, wake, phrase, why = H.learn("Dummy, rest pose", "relax", M)
-    assert not ok and wake is None and phrase is None and "start pose" in why, why
+    ok, wake, phrase, why = H.learn("Dummy, rest pose", "relax", M)       # rest pose is a command of its own
+    assert not ok and wake is None and phrase is None and "rest pose" in why, why
+    ok, _, phrase, why = H.learn("Dummy, rest position please", "home", M)
+    assert not ok and phrase is None, why
 
 
 def test_learn_needs_something_like_the_wake_word():
@@ -272,11 +372,15 @@ class _Page:
 
 
 class _Hear:
-    def __init__(self): self.s = {"dry_run": False, "mode": "wake", "sounds": False, "wake_word": "dummy"}; self.gen = 0
+    def __init__(self):
+        self.s = {"dry_run": False, "mode": "wake", "sounds": False, "wake_word": "dummy", "personality": False,
+                  "pick_confirm": True, "awake_window": 5.0, "gesture_size": 1.0, "gesture_speed": 120.0, "dance_clap": True}
+        self.gen = 0; self.awake = []; self.sounds = []
     def set(self, k, v): self.s[k] = v; return ""
-    def sound(self, n): pass
+    def sound(self, n): self.sounds.append(n)
     def ptt(self, on): pass
     def cancel_pending(self): self.gen += 1
+    def keep_awake(self, seconds, only=None): self.awake.append((seconds, set(only) if only else None))
     def status(self): return {"type": "voice"}
 
 
@@ -284,18 +388,19 @@ def _server(scenario):
     """Run scenario(sv, ser, page) with the control loop going; returns the serial lines sent."""
     import server as sv
     S = sv.S
-    saved = (S.ser, S.live, S.speed, set(S.clients), S.follow, list(S.cur), list(S.tgt), sv.HEAR)
+    saved = (S.ser, S.live, S.speed, set(S.clients), S.follow, list(S.cur), list(S.tgt), sv.HEAR, S.limp, S.held, sv.V)
     async def main():
         ser, page = _Ser(S), _Page()
         sv.HEAR, S.ser, S.live, S.speed, S.clients, S.follow = _Hear(), ser, True, 180.0, {page}, False
         S.cur, S.tgt = list(sv.START_POSE), list(sv.START_POSE)
+        S.limp, S.held, S.voice_again, S.voice_ask = 0, None, None, None; S.voice_undo.clear()
         loop = asyncio.create_task(sv.control_loop())
         try: await scenario(sv, ser, page)
         finally: loop.cancel()
         return [w for w, _ in ser.sent if w.startswith("R ")], ser
     try:
         with contextlib.redirect_stdout(io.StringIO()): return asyncio.run(main())   # the server's log lines
-    finally: S.ser, S.live, S.speed, S.clients, S.follow, S.cur, S.tgt, sv.HEAR = saved
+    finally: S.ser, S.live, S.speed, S.clients, S.follow, S.cur, S.tgt, sv.HEAR, S.limp, S.held, sv.V = saved
 
 
 def _rest_servos(sv): return sv.rest_servos()[0]
@@ -382,6 +487,213 @@ def test_a_command_overtaken_by_stop_is_dropped():
         tgt = list(sv.S.tgt)
         await sv.voice_event(ev)
         assert not ev["ok"] and "dropped" in ev["result"] and sv.S.tgt == tgt, ev
+    _server(go)
+
+
+def _tip(sv, s=None): return sv.fk(sv.S.tgt if s is None else s, sv.S.cfg)[0][-1]
+
+
+async def _arrive(sv, secs=10.0):
+    t0 = time.time()
+    while time.time() - t0 < secs and max(abs(a - b) for a, b in zip(sv.S.tgt[:5], sv.S.cur[:5])) > 0.2: await asyncio.sleep(0.05)
+
+
+def test_spoken_steps_move_exactly_that_far_in_your_frame():
+    async def go(sv, ser, page):
+        for cmd, a, d in (("left", None, (0, -20, 0)), ("toward", None, (20, 0, 0)), ("up", {"size": "small"}, (0, 0, 10)),
+                          ("right", {"n": 3.0, "unit": "cm"}, (0, 30, 0)), ("down", {"n": 15.0}, (0, 0, -15))):
+            before = _tip(sv)
+            r = await sv.voice_act(cmd, cmd, a)
+            assert r[1], (cmd, r)
+            got = [b - c for b, c in zip(_tip(sv), before)]
+            assert all(abs(g - w) < 0.5 for g, w in zip(got, d)), (cmd, got, d)
+            await _arrive(sv)
+    _server(go)
+    import server as sv
+    assert sv.voice_amount(sv.STEP_MM, {"n": 200.0}) == (50.0, " (asked 200: 50 is the most per step)")
+    assert sv.voice_amount(sv.STEP_MM, {"n": 3.0, "unit": "cm"}) == (30.0, "")
+    assert sv.voice_amount(sv.GRIP_S["open"], {"n": 9.0}, numbers=False) == (1.0, "")      # a gripper takes no number
+
+
+def test_a_step_out_of_reach_is_refused_without_moving():
+    async def go(sv, ser, page):
+        for _ in range(12):
+            before = list(sv.S.tgt)
+            r = await sv.voice_act("up", "up", {"size": "big"})
+            if not r[1]:
+                assert sv.S.tgt == before and "can't" in r[0], r; return
+        raise AssertionError("never reached the top")
+    _server(go)
+
+
+def test_spoken_steps_are_refused_limp_live_off_dry_run_and_with_no_page():
+    async def go(sv, ser, page):
+        S = sv.S; before = list(S.tgt)
+        S.limp = 0x0F; assert "relaxed" in (await sv.voice_act("up", "up"))[0]; S.limp = 0
+        S.live = False; assert (await sv.voice_act("left", "left")) == ("refused: Live is off", False); S.live = True
+        sv.HEAR.s["dry_run"] = True; assert (await sv.voice_act("tilt_down", "tilt down")) == ("dry run, not acted on", True)
+        assert (await sv.voice_act("where", "where are you?"))[1], "a question still answers in dry run"
+        sv.HEAR.s["dry_run"] = False
+        S.clients = set(); assert not (await sv.voice_act("roll_left", "roll left"))[1]
+        assert S.tgt == before, S.tgt
+    _server(go)
+
+
+def test_turn_tilt_point_down_and_roll():
+    async def go(sv, ser, page):
+        S, cfg = sv.S, sv.S.cfg
+        y0 = sv.joint_angles(S.tgt, cfg)[0]
+        assert (await sv.voice_act("turn_left", "turn left"))[1] and abs(sv.joint_angles(S.tgt, cfg)[0] - (y0 - 15)) < 0.01
+        await _arrive(sv)
+        tip, p0 = _tip(sv), sv.fk(S.tgt, cfg)[1]
+        # the start pose has the shoulder at its limit: no tilt up there, and only a little down
+        assert not (await sv.voice_act("tilt_up", "tilt up"))[1] and sv.fk(S.tgt, cfg)[1] == p0
+        assert (await sv.voice_act("tilt_down", "tilt down", {"size": "small"}))[1]
+        assert abs(sv.fk(S.tgt, cfg)[1] - (p0 - 5)) < 0.5 and sv.math.dist(_tip(sv), tip) < 2.0, "the tip stays put"
+        await _arrive(sv)
+        r = await sv.voice_act("roll_left", "roll left")
+        assert r[1] and abs(sv.roll_angle(S.tgt, cfg) - sv.roll_angle(list(sv.START_POSE), cfg) + 30) < 0.01, r
+        assert (await sv.voice_act("roll_center", "straighten"))[1] and S.tgt[4] == cfg["joints"][4]["zero"]
+    _server(go)
+
+
+def test_the_gripper_pulse_always_ends_braked():
+    async def go(sv, ser, page):
+        S = sv.S
+        assert (await sv.voice_act("close", "close"))[1]
+        await asyncio.sleep(0.3); assert S.tgt[5] == 50.0, S.tgt[5]
+        await sv.handle(page, {"type": "stop"}); await asyncio.sleep(0.05)
+        assert S.tgt[5] == 90.0 and S.voice_task.done(), "STOP mid-pulse brakes it"
+        assert (await sv.voice_act("open", "open", {"size": "small"}))[1]
+        await _finish(sv); assert S.tgt[5] == S.cur[5] == 90.0
+        S.follow = True
+        try:
+            assert (await sv.voice_act("close", "close"))[1] and S.follow, "the gripper doesn't end follow"
+        finally: S.follow = False
+        await _finish(sv)
+    _server(go)
+
+
+def _camera(**kw):
+    """Enough of a Vision for the control loop, which feeds it the tip and asks its status every few ticks."""
+    import types
+    return types.SimpleNamespace(roll={"zero": 90.0, "sign": 1}, status=lambda: {"type": "vision"}, follow_overlay=None, **kw)
+
+
+def test_up_and_down_while_following_change_the_hover_height():
+    async def go(sv, ser, page):
+        s = {"follow_hover": 110.0}
+        sv.V = _camera(s=s, set_setting=lambda k, v: s.update({k: v}))
+        tick = sv.follow_tick; sv.follow_tick = lambda now: None
+        try:
+            sv.S.follow = True; before = list(sv.S.tgt)
+            assert (await sv.voice_act("up", "up"))[0] == "follow height 130 mm"
+            assert (await sv.voice_act("down", "down", {"n": 50.0}))[0] == "follow height 80 mm"
+            assert sv.S.follow and sv.S.tgt == before, "follow keeps going, and only the hover height changed"
+        finally: sv.follow_tick = tick; sv.S.follow = False
+    _server(go)
+
+
+def test_speed_words_undo_and_again():
+    async def go(sv, ser, page):
+        S = sv.S; S.speed = 60.0
+        for cmd, want in (("faster", 120), ("faster", 180), ("faster", 180), ("slower", 120), ("normal_speed", 60),
+                          ("slower", 20), ("slower", 20), ("full_speed", 180)):
+            await sv.voice_act(cmd, cmd); assert S.speed == want, (cmd, S.speed)
+        start = list(S.tgt[:5]); y0 = _tip(sv)[1]
+        await sv.voice_act("left", "left"); await _arrive(sv)
+        assert (await sv.voice_act("again", "again"))[1] and abs(_tip(sv)[1] - (y0 - 40)) < 0.5, _tip(sv)
+        await _arrive(sv)
+        assert (await sv.voice_act("undo", "undo"))[1] and abs(_tip(sv)[1] - (y0 - 20)) < 0.5
+        assert (await sv.voice_act("undo", "undo"))[1] and S.tgt[:5] == start
+        assert (await sv.voice_act("undo", "undo")) == ("nothing to undo", False)
+    _server(go)
+
+
+def test_a_step_opens_the_no_name_window():
+    async def go(sv, ser, page):
+        ev = {"kind": "command", "cmd": "left", "say": "left", "gen": sv.HEAR.gen}
+        await sv.voice_event(ev)
+        assert ev["ok"] and sv.HEAR.awake[-1] == (5.0, set(sv.AFTER_STEP)), sv.HEAR.awake
+        assert "relax" not in sv.AFTER_STEP and "stop" in sv.AFTER_STEP
+    _server(go)
+
+
+def test_stop_listening_and_mute():
+    async def go(sv, ser, page):
+        assert (await sv.voice_act("mute", "be quiet"))[1] and sv.HEAR.s["sounds"] is False
+        assert (await sv.voice_act("unmute", "sounds on"))[1] and sv.HEAR.s["sounds"] is True
+        assert (await sv.voice_act("listen_off", "stop listening"))[1] and sv.HEAR.s["mode"] == "off"
+    _server(go)
+
+
+def _fake_v(sv, seen=True):
+    """A camera that sees a pen at (200, 0), and a start_pick that only records what it was asked."""
+    import copy
+    import vision
+    s = copy.deepcopy(vision.DEFAULT_SETTINGS)
+    det = {"x": 200.0, "y": 0.0, "closing": 30.0, "name": "pen", "conf": 0.8}
+    v = _camera(s=s, detect_on=False, prompts=[], dets=[det] if seen else [], track=[(200.0, 0.0)] * 3,
+                table_z=lambda x, y: 5.0, pose_health=lambda: (True, "ok"))
+    v.best_target = lambda: dict(det) if seen and v.detect_on else None
+    picks = []
+    def start_pick(x, y, closing, name="", bring=False): picks.append((x, y, name, bring)); return True
+    return v, picks, start_pick
+
+
+def _pick_scenario(answer=None, confirm=True, seen=True, cmd="pick", obj="pen"):
+    """Say "pick up the pen", then `answer` (a coroutine fn of sv and page) while it waits. Returns
+    (picks asked for, the heard entry, whether it hovered over the pen first)."""
+    out = {}
+    async def go(sv, ser, page):
+        v, picks, fake = _fake_v(sv, seen)
+        sv.V, start, sv.start_pick = v, sv.start_pick, fake
+        sv.HEAR.s["pick_confirm"] = confirm
+        ask_s, sv.ASK_S = sv.ASK_S, 1.0
+        try:
+            ev = {"id": 1}
+            r = await sv.voice_act(cmd, "pick", {"obj": obj}, ev)
+            assert r[1] and v.detect_on and v.prompts == [obj], (r, v.prompts)
+            t0 = time.time()
+            while confirm and seen and sv.S.voice_ask is None and time.time() - t0 < 10: await asyncio.sleep(0.05)
+            out["hovered"] = sv.math.dist(_tip(sv)[:2], (200.0, 0.0)) < 2.0
+            if answer: await answer(sv, page)
+            await _finish(sv)
+            out["picks"], out["ev"] = picks, ev
+        finally: sv.start_pick, sv.ASK_S = start, ask_s
+    _server(go)
+    return out["picks"], out["ev"], out["hovered"]
+
+
+def test_a_spoken_pick_hovers_and_waits_for_yes():
+    async def yes(sv, page): assert (await sv.voice_act("confirm", "yes")) == ("picking it up", True)
+    picks, ev, hovered = _pick_scenario(yes)
+    assert hovered and picks == [(200.0, 0.0, "pen", False)], (hovered, picks)
+    assert ev["ok"] and "picking up pen" in ev["result"], ev
+
+
+def test_a_spoken_pick_never_picks_on_no_silence_stop_or_another_command():
+    async def no(sv, page): await sv.voice_act("cancel", "no")
+    async def stop(sv, page): await sv.handle(page, {"type": "stop"})
+    async def other(sv, page): await sv.voice_act("where", "where are you?")
+    for answer in (no, None, stop, other):
+        picks, ev, hovered = _pick_scenario(answer)
+        assert hovered and picks == [], (answer, picks)
+
+
+def test_a_spoken_pick_with_confirm_off_picks_at_once_and_bring_hands_over():
+    picks, ev, hovered = _pick_scenario(confirm=False, cmd="bring")
+    assert not hovered and picks == [(200.0, 0.0, "pen", True)], (hovered, picks)
+
+
+def test_nothing_in_sight_is_no_pick():
+    picks, ev, _ = _pick_scenario(confirm=True, seen=False)
+    assert picks == [] and not ev["ok"] and "no pen in sight" in ev["result"], ev
+
+
+def test_yes_with_nothing_waiting_does_nothing():
+    async def go(sv, ser, page):
+        assert (await sv.voice_act("confirm", "yes")) == ("nothing to confirm", False)
     _server(go)
 
 
