@@ -16,17 +16,21 @@ from a web page: from the laptop, or from an old Galaxy Tab propped up next to i
   open the gripper. Nothing moves until you switch **LIVE** on, and the big red **STOP** (or Esc) always wins.
 - **Tap the table to pick something up:** in the Camera tab, tap a spot on the live video, then
   **HOVER**, **LOWER** or **PICK HERE**. Or type what to look for ("cup", "screwdriver"), let the
-  detector find it, and press **PICK**.
+  detector find it, and press **PICK**. It picks the object up and hovers over the spot, holding it;
+  then **BRING HERE** hands it over to you, or **PUT DOWN** sets it back on the table.
 - **Point with your finger:** with **Follow finger** on, the tool hovers over the spot your index
   finger points at, and follows it around the table. Curl the finger and it stays put. **Low / Hover / High**
   pick the hover height.
 - **Talk to it:** in the Voice tab, switch on **Wake word** and say *"Dummy, come here"* (follow
-  your finger), *"Dummy, start pose"*, *"Dummy, relax"* (fold to rest, then go limp) or *"Dummy,
-  stop"*. **Push to talk** (hold the button, or V on a keyboard) is there for testing. A two-minute
+  your finger), *"Dummy, start pose"*, *"Dummy, relax"* (park on the desk, then go limp) or *"Dummy,
+  stop"*, and about fifty more: *"Dummy, up a bit"*, *"left 3 cm"*, *"close"*, *"pick up the pen"*,
+  *"bring it to me"*, *"is the pose OK?"*, *"what can I say?"*. The Commands page on the tab lists
+  them all. **Push to talk** (hold the button, or V on a keyboard) is there for testing. A two-minute
   calibration on the same tab tunes it to your mic, your room and your voice.
 - **It has a personality:** say just *"Dummy"* and he nods, *"Dummy, are you dumb?"* and he shakes
-  his head, *"Dummy, good boy"* and he dances. Gestures are small, checked against the joint limits and
-  the table first, and always end where they started.
+  his head, *"Dummy, good boy"* and he dances, *"hello"* and he waves, *"thank you"* and he bows,
+  *"bad boy"* and he droops. Say something he doesn't get and he tilts his head. Gestures are small,
+  checked against the joint limits and the table first, and always end where they started.
 - **Calibrate it properly:** a guided wizard takes each joint in turn (about ten minutes), so the
   maths matches the real servos to within millimetres.
 
@@ -149,8 +153,9 @@ the table reasonably reliably.
 | Tool model | Along-axis length fitted; off-axis offsets unmeasured |
 | Finger follow | Works on the real arm (2026-10-24). The Low / Hover / High buttons are new and not yet tried on hardware |
 | Desktop app | DUMMY in the launcher, self-updating from master (2026-10-24). Not yet tried with the arm plugged in |
-| Voice | New. Tested with synthetic speech (340 clips, no wrong actions) and the webcam mic, not yet with a person talking to the arm |
-| Personality | New. Nod, shake, dance, tested against the control loop and with synthetic speech, not yet on the real arm |
+| Voice | Tested with synthetic speech (340 clips, no wrong actions) and the webcam mic. The ~50 newer commands (2026-10-25) are tested offline against the control loop, not yet spoken to the arm |
+| Personality | Nod, shake, dance, wave, bow, head tilt and droop, tested against the control loop, not yet on the real arm |
+| Pick and rest | A pick now holds the object at hover; hand-over and put-down are new. The rest pose parks the tool on the desk (2026-10-25); how far a limp arm settles from there is still to be seen on the bench |
 
 The remaining errors are millimetres rather than centimetres. Getting from "works most of the
 time" to "works every time" is what [docs/ROADMAP.md](docs/ROADMAP.md) tracks - it also records

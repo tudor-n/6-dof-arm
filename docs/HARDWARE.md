@@ -69,7 +69,7 @@ invalidates the marker measurements. If the arm is bumped, re-run marker calibra
 ### Coordinate frame
 
 ```
-        +X  forward, away from the operator
+        +X  forward, toward the operator (who stands in front, where the arm reaches)
          ▲
          │
  +Y ◄────┼─────  robot's LEFT

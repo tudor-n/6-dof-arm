@@ -1,4 +1,5 @@
-"""gestures.py - DUMMY's body language: nod (yes), shake (no) and the happy dance.
+"""gestures.py - DUMMY's body language: nod (yes), shake (no), the happy dance, a wave, a bow, a
+puzzled head tilt and a sad droop.
 
 Choreography and planning only, and pure, so it is tested offline. server.py owns everything that
 knows the arm: it hands plan() the joint calibration, a tip-height function (forward kinematics)
@@ -29,10 +30,22 @@ GESTURES = {
               (0.3, {"roll": 25}), (0.3, {"roll": -25}), (0.3, {"roll": 25}), (0.3, {"roll": -25}), (0.25, {}),
               (0.2, {"grip": 30}), (0.2, {"grip": -30}), (0.2, {"grip": 30}), (0.2, {"grip": -30}), (0.15, {}),
               (0.15, {"down": 10}), (0.15, {}), (0.15, {"down": 10}), (0.2, {})],
+    # hello / bye: head up, and the wrist waves side to side
+    "wave": [(0.25, {"down": -10}), (0.22, {"down": -10, "roll": 30}), (0.3, {"down": -10, "roll": -30}),
+             (0.3, {"down": -10, "roll": 30}), (0.3, {"down": -10, "roll": -30}), (0.25, {})],
+    # thank you: one deep, slow nod that holds for a moment
+    "bow": [(0.5, {"down": 13}), (0.7, {"down": 13}), (0.6, {})],
+    # didn't get that: the head tilts to one side and waits
+    "huh": [(0.3, {"roll": 22, "down": -4}), (0.8, {"roll": 22, "down": -4}), (0.3, {})],
+    # bad boy: sinks slowly, looks away, then comes back
+    "sad": [(0.9, {"down": 13}), (0.6, {"down": 13, "base": -6}), (0.9, {"down": 13, "base": -6}), (1.0, {})],
 }
+TEMPO = {"bow": 0.5, "sad": 0.35}   # x the gesture speed: the solemn ones move slowly
 JOINT = {"base": 0, "down": 3, "roll": 4}
-DONE = {"nod": "nodded", "shake": "shook his head", "dance": "danced"}
-VERB = {"nod": "nod", "shake": "shake his head", "dance": "dance"}
+DONE = {"nod": "nodded", "shake": "shook his head", "dance": "danced", "wave": "waved", "bow": "bowed",
+        "huh": "tilted his head", "sad": "drooped"}
+VERB = {"nod": "nod", "shake": "shake his head", "dance": "dance", "wave": "wave", "bow": "bow",
+        "huh": "tilt his head", "sad": "droop"}
 
 
 def _servo(home, offsets, joints, down_sign, scale):

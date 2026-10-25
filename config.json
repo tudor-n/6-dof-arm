@@ -7,9 +7,9 @@
   },
   "rest": {
     "base": 0,
-    "shoulder": -10,
-    "elbow": 145,
-    "wrist": 50
+    "shoulder": 55.3,
+    "elbow": 6.4,
+    "wrist": 108.3
   },
   "joints": [
     {

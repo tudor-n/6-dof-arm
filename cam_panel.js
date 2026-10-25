@@ -120,7 +120,8 @@
   var SET = [['x_trim', 'X trim', 'mm'], ['y_trim', 'Y trim', 'mm'], ['object_z', 'Aim height above table', 'mm'], ['hover', 'Hover height', 'mm'],
     ['z_grasp_offset', 'Grasp z = table z + this', 'mm'], ['z_floor', 'Lowest allowed tip z', 'mm'],
     ['pick_pitch', 'Pick tool pitch', 'blank = keep current, ' + MINUS + '90 = straight down'], ['grip_open', 'Gripper open value', ''], ['grip_close', 'Gripper close value', ''],
-    ['drop_x', 'Drop X', 'mm'], ['drop_y', 'Drop Y', 'mm'], ['drop_z', 'Drop Z', 'mm']];
+    ['handover_x', 'Hand-over X', 'mm, + toward you'], ['handover_y', 'Hand-over Y', 'mm, + your right'], ['handover_z', 'Hand-over Z', 'mm'],
+    ['handover_pitch', 'Hand-over tool pitch', MINUS + '90 = straight down']];
   var FOL = [['follow_hover', 'Hover height above table', 'mm, 20-400 (the arm may reach less)'], ['follow_finger_z', 'Finger height above table', 'mm, corrects the aim'],
     ['follow_lead', 'Aim ahead of the fingertip', 'mm'], ['follow_deadband', 'Deadband', 'mm, ignores hand tremor'],
     ['follow_pitch', 'Follow tool pitch', 'preferred; blank = pitch at engage, ' + MINUS + '90 = down']];
@@ -154,7 +155,7 @@
     });
     return h;
   }
-  var SAVED = '<div class="x f" style="left:28px;top:392px;font-size:13px;line-height:16px">Values are saved to vision.json as soon as you press SET.</div>';
+  var SAVED = '<div class="x f" style="left:28px;top:446px;font-size:13px;line-height:16px">Values are saved to vision.json as soon as you press SET.</div>';
   sh += '<div id="sxset" class="x" style="left:260px;top:0;width:764px;height:472px;display:none">' + setGrid(SET) + SAVED + '</div>';
   sh += '<div id="sxfol" class="x" style="left:260px;top:0;width:764px;height:472px;display:none">' + setGrid(FOL) +
     '<div class="x sl2" style="left:28px;top:212px;width:708px">With <b>Follow finger</b> on, point with your index finger (other fingers curled) and the tool hovers at the hover height over the spot just ahead of your fingertip. Curl the finger or pull the hand away and it holds. ' +
@@ -259,8 +260,10 @@
   act('vtog', { tap: function (el) { var k = el.getAttribute('data-s'); send({ type: 'vset', key: k, value: !(V && V.settings[k]) }); } });
   act('plock', { tap: function () { send({ type: 'pose_lock', on: !(V && V.locked) }); } });
   act('chov', { tap: function () { send({ type: 'goto_click', mode: 'hover' }); } });
-  act('clow', { tap: function () { send({ type: 'goto_click', mode: 'low' }); } });
-  act('cpick', { tap: function () { send({ type: 'pick_click' }); } });
+  // while a pick is holding something, Lower / Pick here become Put down / Bring here (Hover carries it)
+  function held() { return !!(S && S.held); }
+  act('clow', { tap: function () { send(held() ? { type: 'put_down' } : { type: 'goto_click', mode: 'low' }); } });
+  act('cpick', { tap: function () { send(held() ? { type: 'handover' } : { type: 'pick_click' }); } });
   act('pickd', { tap: function () { send({ type: 'pick_detected' }); } });
   act('det', { tap: function () { send({ type: 'detect', on: !(V && V.detect), prompt: promptText() }); } });
   // follow: the server owns the state (and switches it off on any manual move); this only asks to flip it
@@ -430,6 +433,7 @@
       each(['low', 'hover', 'high'], function (p) { tog($('cfz' + p), 'on', !!fo && fo.preset == p); });
     }
     if (sub == 'roll' && croll.drag == null) { croll.set(Math.round(t.roll)); txt($('crollv'), f0(t.roll)); }
+    if (!sub) renderHold();
   }
   function warnings() {
     var w = [], add = function (c, s) { w.push([c, s]); };
@@ -464,17 +468,24 @@
     txt($('wbtn'), n ? n + (n == 1 ? ' warning' : ' warnings') : 'Log'); tog($('wbtn'), 'w', n);
     txt($('clock'), V.locked ? 'Unlock pose' : 'Lock pose');
     each(cam.querySelectorAll('[data-a=vtog]'), function (c) { tog(c, 'on', V.settings[c.getAttribute('data-s')]); });
-    show($('cbusy'), V.busy);
     var c = V.click;
     show($('tvals'), !!c); show($('tnone'), !c);
     if (c) { txt($('tx'), f1(c.x)); txt($('ty'), f1(c.y)); txt($('tz'), f1(c.z)); }
-    each(['chov', 'clow', 'cpick'], function (a) { tog(cam.querySelector('[data-a=' + a + ']'), 'dis', !c); });
+    renderHold();
     tog($('cdet'), 'on', V.detect);
-    tog(cam.querySelector('[data-a=pickd]'), 'dis', !(V.detect && V.dets.length));
+    tog(cam.querySelector('[data-a=pickd]'), 'dis', !(V.detect && V.dets.length) || held());
     var p = promptText(); txt($('cprompt'), p || 'tap to type objects…'); tog($('cprompt'), 'f', !p);
     var d = V.dets[0];
     txt($('cdets'), d ? d.name + ' ' + d.conf.toFixed(2) + ' · X ' + f0(d.x) + ' Y ' + f0(d.y) + (d.closing != null ? ' · jaws ' + f0(d.closing) + '°' : '') + (V.dets.length > 1 ? '   (+' + (V.dets.length - 1) + ' more)' : '')
       : (V.detect ? 'no detections' : 'detect is off'));
+  }
+  function renderHold() {
+    if (!V) return;
+    var h = held(), c = V.click, lo = cam.querySelector('[data-a=clow]'), pk = cam.querySelector('[data-a=cpick]');
+    txt(lo, h ? 'Put down' : 'Lower'); txt(pk, h ? 'Bring here' : 'Pick here');
+    tog(cam.querySelector('[data-a=chov]'), 'dis', !c); tog(lo, 'dis', !c && !h); tog(pk, 'dis', !c && !h);
+    show($('cbusy'), V.busy || h);
+    txt($('cbusy'), V.busy ? 'Pick running · STOP cancels' : h ? 'Holding ' + (S.held.name || 'it') + ' · Hover carries it' : '');
   }
   function renderSetup() {
     if (sub == 'mk') {
